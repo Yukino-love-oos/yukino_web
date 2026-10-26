@@ -125,6 +125,9 @@ class Settings:
 
     # ---- 行为开关 ----
     llm_stream: bool = True
+    # 台词不是日语时自动重试一次（本地小模型常把 <ja> 写成中文，
+    # 而 GPT-SoVITS 用 text_lang=ja 念中文会变成乱码音）
+    repair_ja: bool = True
     # TTS 流式默认关闭：api_v2 开流式会自动关闭并行推理与分桶处理，
     # 整句总耗时反而更长（实测 2.3s → 3.0~4.0s）。
     # 当前架构是「整句收完再播」，所以非流式最快；等实现真·边收边播再打开。
@@ -215,6 +218,7 @@ def load_settings(dotenv: Path | None = None) -> Settings:
         tts_cache_dir=gpath("TTS_CACHE_DIR", ROOT / "data/tts_cache"),
         log_level=get("LOG_LEVEL", "INFO").upper(),
         llm_stream=_as_bool(get("LLM_STREAM", "true"), True),
+        repair_ja=_as_bool(get("LLM_REPAIR_JA", "true"), True),
         tts_stream=_as_bool(get("TTS_STREAM", "false"), False),
         use_tts_cache=_as_bool(get("TTS_CACHE", "true"), True),
         prefetch_first_sentence=_as_bool(get("PREFETCH_FIRST_SENTENCE", "true"), True),

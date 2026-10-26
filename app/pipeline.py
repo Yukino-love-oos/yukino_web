@@ -111,6 +111,39 @@ class Pipeline:
         msgs.append({"role": "user", "content": user_text})
         return msgs
 
+    # ---------------- 语言守卫 ----------------
+    def repair_language(self, user_text: str, bad: Turn) -> Turn | None:
+        """台词不是日语时，带纠正指令重跑一次。
+
+        为什么必须有：本地 qwen2:7b 经常把 <ja> 写成中文。
+        GPT-SoVITS 用 text_lang="ja" 去念中文会输出乱码音，比没声音更糟。
+        """
+        try:
+            msgs = self.build_messages(user_text)
+            msgs.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "前回の返答は中国語になっていた。やり直して。\n"
+                        "厳守：<ja> の中は**日本語だけ**。中国語の文字を一文字も入れない。"
+                        "翻訳は <zh>、動作は <act> に書く。"
+                    ),
+                }
+            )
+            raw = self.llm.complete(msgs)
+            parser = ProtocolParser()
+            for ch in raw:
+                parser.feed(ch)
+            parser.close()
+            fixed = parser.turn
+            if fixed.ja and looks_japanese(fixed.ja):
+                log.info("语言守卫：重试后得到日语台词")
+                return fixed
+            log.warning("语言守卫：重试后仍非日语（%s）", fixed.ja[:40])
+        except Exception as e:
+            log.warning("语言守卫重试失败：%r", e)
+        return None
+
     # ---------------- 主流程 ----------------
     def respond(self, user_text: str) -> Iterator[dict]:
         """产出事件流。
@@ -123,12 +156,25 @@ class Pipeline:
         """
         parser = ProtocolParser()
         index = 0
+        lang_bad = False
 
         try:
             messages = self.build_messages(user_text)
         except Exception as e:
             yield {"type": "error", "message": f"构造请求失败：{e}"}
             return
+
+        def emit(sentence: str) -> dict | None:
+            """对一句话：是日语就合成，不是就别送去 TTS（否则会出乱码音）。"""
+            nonlocal index, lang_bad
+            if not looks_japanese(sentence):
+                lang_bad = True
+                log.warning("跳过非日语台词，不做语音合成：%s", sentence[:40])
+                return None
+            audio = self.speak(sentence, first=(index == 0))
+            ev = {"type": "sentence", "text": sentence, "audio": audio, "index": index}
+            index += 1
+            return ev
 
         try:
             stream = (
@@ -138,23 +184,36 @@ class Pipeline:
             )
             for chunk in stream:
                 for sentence in parser.feed(chunk):
-                    audio = self.speak(sentence, first=(index == 0))
-                    yield {"type": "sentence", "text": sentence, "audio": audio, "index": index}
-                    index += 1
+                    ev = emit(sentence)
+                    if ev:
+                        yield ev
             for sentence in parser.close():
-                audio = self.speak(sentence, first=(index == 0))
-                yield {"type": "sentence", "text": sentence, "audio": audio, "index": index}
-                index += 1
+                ev = emit(sentence)
+                if ev:
+                    yield ev
         except Exception as e:
             log.exception("LLM 流式生成失败")
             yield {"type": "error", "message": f"生成失败：{e}"}
 
         turn: Turn = parser.turn
 
-        # 本地小模型偶尔会把 <ja> 写成中文。中文没有假名，用这点做廉价告警。
-        if turn.ja and not looks_japanese(turn.ja):
-            log.warning("台词语言异常（疑似中文混入 <ja>）：%s", turn.ja)
-            yield {"type": "warn", "message": "台词疑似不是日语，可能影响发音"}
+        # ---- 语言守卫：本地小模型把 <ja> 写成中文时，带纠正指令重试一次 ----
+        if lang_bad and self.settings.repair_ja:
+            yield {"type": "info", "message": "台词不是日语，正在让模型重写…"}
+            fixed = self.repair_language(user_text, turn)
+            if fixed is not None:
+                turn = fixed
+                for sentence in turn.sentences:
+                    audio = self.speak(sentence, first=(index == 0))
+                    yield {
+                        "type": "sentence",
+                        "text": sentence,
+                        "audio": audio,
+                        "index": index,
+                    }
+                    index += 1
+            else:
+                yield {"type": "warn", "message": "重写后仍不是日语，本次可能没有声音"}
 
         delta, reason = self.session.apply_affinity(turn.aff, user_text)
         try:

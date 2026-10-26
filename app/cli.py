@@ -111,8 +111,10 @@ def main(argv: list[str] | None = None) -> int:
                         pass  # 播放失败就静默，文字照常显示
             elif kind == "error":
                 print(f"\n[错误] {ev['message']}")
-            elif kind == "warn":
+            elif kind == "info":
                 print(f"\n[提示] {ev['message']}")
+            elif kind == "warn":
+                print(f"\n[警告] {ev['message']}")
             elif kind == "done":
                 turn = ev["turn"]
                 if not spoke:
