@@ -12,7 +12,12 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.llm.protocol import ProtocolParser, clean_for_tts, is_speakable  # noqa: E402
+from app.llm.protocol import (  # noqa: E402
+    ProtocolParser,
+    clean_for_tts,
+    is_speakable,
+    looks_japanese,
+)
 
 
 FULL = (
@@ -193,6 +198,36 @@ class TestJunkFiltering(unittest.TestCase):
         self.assertTrue(is_speakable("そう。"))
         self.assertTrue(is_speakable("猫"))
         self.assertTrue(is_speakable("カタカナ"))
+
+
+class TestStrayClosingTag(unittest.TestCase):
+    """回归：本地小模型常只写 </ja> 不写 <ja>，台词不能被丢掉。"""
+
+    def test_closing_tag_without_opening(self):
+        p = ProtocolParser()
+        out = p.feed("……そう。あなたにしては、まともね。</ja>\n<zh>……是吗。</zh>\n<aff>-2</aff>")
+        out.extend(p.close())
+        self.assertEqual(p.turn.ja, "……そう。あなたにしては、まともね。")
+        self.assertEqual(p.turn.zh, "……是吗。")
+        self.assertEqual(p.turn.aff, -2)
+        self.assertEqual(out, ["……そう。", "あなたにしては、まともね。"])
+
+
+class TestJapaneseDetection(unittest.TestCase):
+    def test_kana_detected(self):
+        self.assertTrue(looks_japanese("それはどうかしら。"))
+        self.assertTrue(looks_japanese("そう"))
+        self.assertTrue(looks_japanese("カタカナ"))
+
+    def test_chinese_not_detected(self):
+        self.assertFalse(looks_japanese("最近在读的书是哲学书。"))
+        self.assertFalse(looks_japanese("我喜欢探索深邃的思想。"))
+
+    def test_short_kanji_tolerated(self):
+        self.assertTrue(looks_japanese("猫。"))  # 太短，不下结论
+
+    def test_empty_is_fine(self):
+        self.assertTrue(looks_japanese(""))
 
 
 if __name__ == "__main__":

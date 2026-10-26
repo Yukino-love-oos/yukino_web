@@ -47,8 +47,24 @@ _LEAD_PUNCT = re.compile(r"^[\s、。，．,.]\s*")
 _TAIL_DUP = re.compile(r"[、，,]\s*(?=[。．.！？!?])")
 # 是否含有可发音的文字（假名或汉字）
 _JA = re.compile(r"[\u3040-\u30ff\u4e00-\u9fff]")
+# 假名（判断「是不是真的日语」—— 中文只有汉字，没有假名）
+_KANA = re.compile(r"[\u3040-\u30ff]")
 
 KNOWN_MOODS = ("calm", "tsundere", "soft", "angry", "shy", "tired")
+
+
+def looks_japanese(text: str) -> bool:
+    """粗判是否真的是日语台词。
+
+    本地小模型（qwen2:7b）偶尔会把 <ja> 写成中文。中文没有假名，
+    所以「有假名」是最便宜的判据。纯汉字短语（如「猫」）会误判，
+    因此只在句子足够长时才下结论。
+    """
+    if not text:
+        return True
+    if _KANA.search(text):
+        return True
+    return len(text) <= 6  # 太短的纯汉字句（「猫。」「そう」）不追究
 
 
 def clean_for_tts(text: str) -> str:

@@ -17,7 +17,7 @@ from typing import Iterator
 
 from .config import Settings
 from .llm.persona import Persona, render_system_prompt
-from .llm.protocol import ProtocolParser, Turn
+from .llm.protocol import ProtocolParser, Turn, looks_japanese
 from .state import memory
 from .state.session import Session
 from .tts.cache import AudioCache, fix_wav_header
@@ -150,6 +150,12 @@ class Pipeline:
             yield {"type": "error", "message": f"生成失败：{e}"}
 
         turn: Turn = parser.turn
+
+        # 本地小模型偶尔会把 <ja> 写成中文。中文没有假名，用这点做廉价告警。
+        if turn.ja and not looks_japanese(turn.ja):
+            log.warning("台词语言异常（疑似中文混入 <ja>）：%s", turn.ja)
+            yield {"type": "warn", "message": "台词疑似不是日语，可能影响发音"}
+
         delta, reason = self.session.apply_affinity(turn.aff, user_text)
         try:
             self.session.record_turn(user_text, turn, delta)

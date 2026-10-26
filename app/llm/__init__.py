@@ -2,7 +2,14 @@
 
 from .client import ChatClient, LLMError, MockClient, OllamaClient, build_client
 from .persona import Persona, load_persona, render_system_prompt
-from .protocol import KNOWN_MOODS, ProtocolParser, Turn, clean_for_tts, is_speakable
+from .protocol import (
+    KNOWN_MOODS,
+    ProtocolParser,
+    Turn,
+    clean_for_tts,
+    is_speakable,
+    looks_japanese,
+)
 
 __all__ = [
     "ChatClient",
@@ -17,5 +24,6 @@ __all__ = [
     "Turn",
     "clean_for_tts",
     "is_speakable",
+    "looks_japanese",
     "KNOWN_MOODS",
 ]

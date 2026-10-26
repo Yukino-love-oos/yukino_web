@@ -67,19 +67,21 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = load_settings()
 
-    print("=" * 58)
-    print("  雪之下雪乃 · 侍奉部")
-    print("=" * 58)
+    # 注意：pipeline 必须先构造，下面打印头部要用它的 provider/model
+    pipeline = build_pipeline(settings)
+
     provider = getattr(pipeline.llm, "provider", None) or (
         "mock" if type(pipeline.llm).__name__ == "MockClient" else settings.llm_provider
     )
     model = getattr(pipeline.llm, "model", settings.model)
+
+    print("=" * 58)
+    print("  雪之下雪乃 · 侍奉部")
+    print("=" * 58)
     print(f"  思考模型 : {provider} / {model}")
     print(f"  语音     : {settings.gsv_api_base}")
     print(f"  好感度   : {settings.db_path}")
     print("=" * 58)
-
-    pipeline = build_pipeline(settings)
 
     if not args.no_audio and not pipeline.tts.health():
         print("⚠ 语音服务未启动，本次只用文字。启动方式： .\\scripts\\start_tts.ps1")
@@ -109,6 +111,8 @@ def main(argv: list[str] | None = None) -> int:
                         pass  # 播放失败就静默，文字照常显示
             elif kind == "error":
                 print(f"\n[错误] {ev['message']}")
+            elif kind == "warn":
+                print(f"\n[提示] {ev['message']}")
             elif kind == "done":
                 turn = ev["turn"]
                 if not spoke:
