@@ -1,0 +1,90 @@
+# ============================================================
+#  雪之下雪乃 AI 语音伴侣 —— 仓库忽略规则
+#  原则：Git 只跟踪「代码 + 配置 + 文档」。
+#        模型权重、运行时、虚拟环境、音频、密钥一律不进版本控制。
+# ============================================================
+
+# ---------- 密钥 / 隐私 ----------
+.env
+.env.*
+!.env.example
+*.key
+secrets/
+
+# ---------- 模型权重（体积大头，走 models/README.md 说明下载）----------
+*.pth
+*.ckpt
+*.pt
+*.onnx
+*.safetensors
+*.bin
+yukino/Yukino/
+YUK4th95%/
+models/*/
+!models/README.md
+
+# ---------- GPT-SoVITS 第三方整合包（整包不进 Git，可重新下载）----------
+yukino_voice/
+!yukino_voice/README-来源.md
+
+# ---------- 本机环境相关（换机器会变，不要提交）----------
+configs/windows-roots.pem
+configs/.tts_runtime_*.yaml
+.env
+.env.*
+!.env.example
+
+# ---------- 音频 / 媒体 ----------
+*.wav
+*.mp3
+*.ogg
+*.m4a
+*.flac
+*.mp4
+!tests/fixtures/*.wav
+!docs/samples/*.wav
+!app/ui/assets/**/*.wav
+
+# ---------- 运行时生成的配置 ----------
+configs/.tts_runtime_*.yaml
+tmp/
+!models/README.md
+
+# ---------- 运行时产物 / 数据 ----------
+data/
+!data/.gitkeep
+logs/
+*.log
+tts_cache/
+.streamlit/
+
+# ---------- Python ----------
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# ---------- 编辑器 / 系统 ----------
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ---------- 临时 ----------
+tmp/
+temp/
+*.tmp
+*.bak
+docs/_test.wav
+
+# ---------- 旧仓库归档（含 9.5GB 历史，确认后可删除）----------
+.git-archive-*/
+*.bundle
