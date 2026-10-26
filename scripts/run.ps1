@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     一键启动雪之下雪乃（自动拉起语音服务）。
 
@@ -87,27 +87,30 @@ else {
     Write-Host "         首次加载约 15~40 秒，可先进入对话（会自动降级为文字）" -ForegroundColor DarkGray
 }
 
-# ---------- 检查 streamlit（只有 Web 模式需要）----------
+# ---------- 检查 streamlit（只有 Streamlit 版网页需要）----------
 $useCli = $Cli.IsPresent
+$hasStreamlit = $false
 if (-not $useCli) {
-    $hasStreamlit = $false
     try {
         $null = & $Python -c "import streamlit" 2>$null
         $hasStreamlit = ($LASTEXITCODE -eq 0)
     } catch { $hasStreamlit = $false }
 
     if (-not $hasStreamlit) {
+        # 没装 streamlit 也不影响网页版：退回零依赖的 app/server.py
         Write-Host ""
-        Write-Host "未安装 streamlit，自动改用终端版。" -ForegroundColor Yellow
-        Write-Host "想用网页版请执行： $Python -m pip install streamlit" -ForegroundColor Yellow
+        Write-Host "未安装 streamlit，改用零依赖网页版（标准库 http.server）。" -ForegroundColor Yellow
+        Write-Host "想要 Streamlit 版： .\\scripts\\setup.ps1" -ForegroundColor DarkGray
         Write-Host ""
-        $useCli = $true
     }
 }
 
 # ---------- 启动 ----------
 if ($useCli) {
     & $Python -m app.cli
+}
+elseif (-not $hasStreamlit) {
+    & $Python -m app.server
 }
 else {
     & $Python -m streamlit run (Join-Path $Root 'app\ui\streamlit_app.py')

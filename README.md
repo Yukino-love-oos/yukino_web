@@ -56,6 +56,19 @@ python -m venv .venv
 .\scripts\run.ps1 -NoTts       # 纯文字
 ```
 
+**网页版有两条路，都不影响使用**：
+
+| 版本 | 命令 | 依赖 |
+|---|---|---|
+| 零依赖网页版（推荐） | `python -m app.server`（或 `.\scripts\run.ps1`） | **无**，标准库 `http.server` |
+| Streamlit 版 | `.\scripts\run.ps1`（装了 streamlit 时自动用它） | `streamlit` |
+
+`run.ps1` 会自动判断：装了 streamlit 用 Streamlit 版，否则用零依赖版。
+所以**不装任何第三方包也能用浏览器聊天**。
+
+> 装依赖踩坑的话：`requirements.txt` 必须是纯 ASCII（pip 在中文 Windows 上按 GBK 读文件，
+> 中文注释会直接 `UnicodeDecodeError`）；另外 `.\scripts\setup.ps1` 会一并处理证书与虚拟环境。
+
 语音服务单独启动（需要独立窗口）：
 
 ```powershell

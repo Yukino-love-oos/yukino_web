@@ -1,33 +1,39 @@
 # ============================================================
-#  雪之下雪乃 AI 语音伴侣 —— 依赖清单
+#  Yukinoshita Yukino - AI voice companion | dependencies
 #
-#  设计目标：核心链路零依赖。
-#  配置读取 / 标签协议解析 / OpenAI 兼容流式客户端 / SQLite 状态 /
-#  TTS 客户端 / WAV 处理 —— 全部用 Python 标准库实现，
-#  所以即使一个包都装不上，python -m app.cli 也能跑通完整对话。
+#  NOTE: this file is intentionally pure ASCII.
+#  pip on Windows decodes requirement files with the system locale
+#  (GBK on a Chinese Windows). Any non-ASCII comment here makes pip
+#  crash with:
+#      UnicodeDecodeError: 'gbk' codec can't decode byte 0xaa
+#  So keep every comment in English. See README.md (Chinese) for docs.
 #
-#  唯一必须装的是 Web 界面用的 streamlit。
+#  Design goal: the core pipeline has ZERO third-party dependencies.
+#  Config loading / tag-protocol parser / OpenAI-compatible streaming
+#  client / SQLite state / TTS client / WAV handling are all stdlib,
+#  so `python -m app.cli` works even if nothing is installed.
+#
+#  The only hard requirement is streamlit, used by the web UI.
 # ============================================================
 
-# ---------- 必装 ----------
-streamlit>=1.36          # Web UI（需要 st.container(height=)、st.toggle 等较新特性）
+# ---------- required (web UI only) ----------
+streamlit>=1.36
 
-# ---------- 可选：离线自测 ----------
-# pytest>=8.0            # 想用 pytest 跑 tests/ 才需要；标准库 unittest 已够
-#                        #   python -m unittest discover -s tests -t . -v
+# ---------- optional: offline self-test ----------
+# pytest>=8.0
+#   stdlib unittest is enough:
+#     python -m unittest discover -s tests -t . -v
 
-# ---------- 可选：语音输入 / 打断（阶段 M6）----------
-# faster-whisper>=1.0    # 日语 ASR，small/medium 在 8G 显存上很宽裕
-# silero-vad>=5.0        # 语音活动检测，实现「用户一开口就停播」
-# sounddevice>=0.4.6     # 采集麦克风
-# soundfile>=0.12        # 读写音频
+# ---------- optional: voice input / barge-in (stage M6) ----------
+# faster-whisper>=1.0
+# silero-vad>=5.0
+# sounddevice>=0.4.6
+# soundfile>=0.12
 
-# ---------- 可选：向量化长期记忆（阶段 M8）----------
-# sqlite-vec>=0.1        # 轻量向量检索，不开新服务
-#                        # 装了之后只需替换 app/state/memory.py 里的 recall()
+# ---------- optional: vector long-term memory (stage M8) ----------
+# sqlite-vec>=0.1
 
-# 注意：
-#   1. 不要在这里装 openai —— 我们的 app/llm/client.py 用标准库实现了
-#      OpenAI 兼容的流式协议，少一个依赖少一个坑。
-#   2. 不要在这里装 torch —— GPT-SoVITS 整合包自带 runtime（Python 3.9 + torch 2.0.0+cu118），
-#      应用层跑在系统 Python（3.11/3.12）里，两者互不干扰。
+# Do NOT add `openai`: app/llm/client.py implements the
+# OpenAI-compatible streaming protocol with urllib.
+# Do NOT add `torch`: the GPT-SoVITS bundle ships its own runtime
+# (Python 3.9 + torch 2.0.0+cu118); the app layer runs on system Python.
