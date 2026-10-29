@@ -23,7 +23,7 @@
 ### 坑 1：磁盘只有 40 GB，装不下 22 GB 整合包
 
 Windows 自身约 20 GB，剩 20 GB。**必须精简上传**：用 `scripts/pack_for_ecs.ps1`
-把 22 GB 砍到 **约 8.6 GB**（剔除 UVR5/ASR/BigVGAN/v3v4/v2Pro 底模等 13 GB 无用文件）。
+把 22 GB 砍到 **约 8.86 GB**（剔除 UVR5/ASR/BigVGAN/v3v4/v2Pro 底模等 13 GB 无用文件）。
 
 ### 坑 2：内存 8 GB 被 Windows 吃掉 3 GB
 
@@ -77,7 +77,7 @@ gpedit.msc   # 计算机配置 → 管理模板 → Windows 组件 → Windows �
 
 ```powershell
 cd D:\Yukino
-.\scripts\pack_for_ecs.ps1                      # 生成 D:\Yukino\_pack_ecs\yukino_tts（约 8.6 GB）
+.\scripts\pack_for_ecs.ps1                      # 生成 D:\Yukino\_pack_ecs\yukino_tts（约 8.86 GB）
 
 # 顺便把项目代码也打个包（只有几十 MB，但服务器访问 GitHub 可能不稳）
 Compress-Archive -Path 'D:\Yukino\app','D:\Yukino\configs','D:\Yukino\persona','D:\Yukino\tests','D:\Yukino\scripts','D:\Yukino\requirements.txt','D:\Yukino\.env.example' `
@@ -94,7 +94,7 @@ Compress-Archive -Path 'D:\Yukino\app','D:\Yukino\configs','D:\Yukino\persona','
 | RDP 驱动器重定向 | 慢但简单 | 连接时勾选「本地资源 → 驱动器」，直接拖拽 |
 | rclone / WinSCP (SFTP) | 中 | 服务器需开 22 端口 |
 
-8.6 GB 按家用上行 30 Mbps 估算约 **40 分钟**。
+8.86 GB 按家用上行 30 Mbps 估算约 **40 分钟**。
 
 ### 步骤 4：解压
 
@@ -243,10 +243,47 @@ A：可以，但整合包是 Windows 版（`runtime\python.exe`、`ffmpeg.exe`�
 - [ ] Administrator 密码已改强密码
 - [ ] 虚拟内存已设 8 GB
 - [ ] Windows 自动重启已关闭
-- [ ] `yukino_tts` 已解压，体积约 8.6 GB
+- [ ] `yukino_tts` 已解压，体积约 8.86 GB
 - [ ] `yukino_app` 已解压，`.env` 已填 DeepSeek Key 与令牌
 - [ ] `bench_tts.py` 实测记录已写入 docs
 - [ ] Web 页面本机可访问、能对话、有声音
 - [ ] 任务计划 `YukinoAI` 已注册，重启服务器后自动恢复
 - [ ] Tailscale 已装，手机可访问
 - [ ] QQ 机器人已提交审核
+
+---
+
+## 6. 打包产物的本地验证结果（2026-10-26 已完成）
+
+为确认「精简集传到服务器能跑」，我直接在本地用**打包目录里的 runtime** 做了完整冒烟测试：
+
+| 检查项 | 结果 |
+|---|---|
+| 从 `_pack_ecs\yukino_tts` 启动 `api_v2.py` | ✅ 成功，加载 30 秒 |
+| `users.pth` 已改相对路径，导入不再指向原目录 | ✅ |
+| 4 线程 CPU 合成短句「そう。」 | ✅ 1.84 s |
+| 4 线程 CPU 合成中句「それはどうかしら。」 | ✅ 3.47 s |
+| 4 线程 CPU 合成长句「別に、あなたのためじゃないわ。」 | ✅ 5.01 s |
+| 平均实时倍率 | 0.55x（3 句回复约 **11 秒**） |
+| 打包体积 | **8.86 GB**（原 22 GB） |
+
+**所以：4 vCPU 的 ECS 预期表现 ≈ 上面这组数字**，在你那台机器上应该与之接近。
+
+### 打包时踩到并已修复的两个坑（记录备查）
+
+1. **`runtime\Lib\site-packages\users.pth` 写死了绝对路径**
+   原文件内容是 6 条 `D:\Yukino\...`，换机器后完全失效，导致 Python 仍从原目录导入
+   （或直接 `ModuleNotFoundError`）。打包脚本现在会重写成相对路径：
+   ```
+   ../../../
+   ../../../GPT_SoVITS/BigVGAN
+   ../../../GPT_SoVITS
+   ../../../tools
+   ```
+
+2. **不能只按白名单挑子目录**，会漏模块。实测漏掉了：
+   - `GPT_SoVITS/eres2net/`（`sv.py` 用 `sys.path.append(cwd/GPT_SoVITS/eres2net)`）
+   - `GPT_SoVITS/pretrained_models/sv/`（103 MB，`sv.py` 要加载 `pretrained_eres2netv2w24s4ep4.ckpt`）
+   - `tools/audio_sr.py` + `tools/AP_BWE_main/`（`TTS.py` 有 `from tools.audio_sr import AP_BWE`）
+
+   现在的策略是「**整目录复制 + 只删明确无用的大块**」，比白名单安全。

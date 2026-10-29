@@ -1,33 +1,56 @@
-# ============================================================
-#  雪之下雪乃 —— **云服务器 CPU 推理**配置（相对路径版）
-#
-#  与 configs/tts_infer_cpu.yaml 的区别：权重用**相对路径**，
-#  因为云服务器上的目录结构与本地不同（本地是 D:\Yukino\...）。
-#  只要在整合包根目录下启动，相对路径就成立。
-#
-#  部署方式（详见 docs/ECS部署-Windows.md）：
-#    1) 本机执行 .\scripts\pack_for_ecs.ps1 生成最小集（约 8.6 GB）
-#    2) 上传并解压到服务器 C:\yukino_tts
-#    3) 在该目录下启动：
-#         runtime\python.exe api_v2.py -a 127.0.0.1 -p 9881 -c C:\yukino_app\configs\tts_infer_cpu_server.yaml
-#
-#  实测参考（AMD Ryzen 7 7435H，16 线程）：
-#      短句 1.6s / 中句 3.4s / 长句 4.0s；2 线程约 1.9/4.9/10.0 s
-#  云上 4 vCPU 预期：短句 2~3s / 长句 6~12s（务必用 scripts/bench_tts.py 实测）
-# ============================================================
-
 custom:
-  # ---- 无 GPU：强制 CPU，且必须关掉半精度（CPU 不支持 fp16）----
-  device: cpu
-  is_half: false
-
-  version: v2
-
-  # ---- 雪乃权重（相对整合包根目录）----
-  # 想换弱语气档：改成 GPT_weights/Yukino_Weak-e25.ckpt + SoVITS_weights/Yukino_Weak_01.pth
-  t2s_weights_path: GPT_weights/default.ckpt
-  vits_weights_path: SoVITS_weights/Yukino_Strong.pth
-
-  # ---- 基础模型（打包脚本已保留这三个，其余已剔除）----
   bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
   cnhuhbert_base_path: GPT_SoVITS/pretrained_models/chinese-hubert-base
+  device: cpu
+  is_half: false
+  t2s_weights_path: GPT_weights/default.ckpt
+  version: v1
+  vits_weights_path: SoVITS_weights/Yukino_Strong.pth
+v1:
+  bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
+  cnhuhbert_base_path: GPT_SoVITS/pretrained_models/chinese-hubert-base
+  device: cpu
+  is_half: false
+  t2s_weights_path: GPT_SoVITS/pretrained_models/s1bert25hz-2kh-longer-epoch=68e-step=50232.ckpt
+  version: v1
+  vits_weights_path: GPT_SoVITS/pretrained_models/s2G488k.pth
+v2:
+  bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
+  cnhuhbert_base_path: GPT_SoVITS/pretrained_models/chinese-hubert-base
+  device: cpu
+  is_half: false
+  t2s_weights_path: GPT_SoVITS/pretrained_models/gsv-v2final-pretrained/s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt
+  version: v2
+  vits_weights_path: GPT_SoVITS/pretrained_models/gsv-v2final-pretrained/s2G2333k.pth
+v2Pro:
+  bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
+  cnhuhbert_base_path: GPT_SoVITS/pretrained_models/chinese-hubert-base
+  device: cpu
+  is_half: false
+  t2s_weights_path: GPT_SoVITS/pretrained_models/s1v3.ckpt
+  version: v2Pro
+  vits_weights_path: GPT_SoVITS/pretrained_models/v2Pro/s2Gv2Pro.pth
+v2ProPlus:
+  bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
+  cnhuhbert_base_path: GPT_SoVITS/pretrained_models/chinese-hubert-base
+  device: cpu
+  is_half: false
+  t2s_weights_path: GPT_SoVITS/pretrained_models/s1v3.ckpt
+  version: v2ProPlus
+  vits_weights_path: GPT_SoVITS/pretrained_models/v2Pro/s2Gv2ProPlus.pth
+v3:
+  bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
+  cnhuhbert_base_path: GPT_SoVITS/pretrained_models/chinese-hubert-base
+  device: cpu
+  is_half: false
+  t2s_weights_path: GPT_SoVITS/pretrained_models/s1v3.ckpt
+  version: v3
+  vits_weights_path: GPT_SoVITS/pretrained_models/s2Gv3.pth
+v4:
+  bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
+  cnhuhbert_base_path: GPT_SoVITS/pretrained_models/chinese-hubert-base
+  device: cpu
+  is_half: false
+  t2s_weights_path: GPT_SoVITS/pretrained_models/s1v3.ckpt
+  version: v4
+  vits_weights_path: GPT_SoVITS/pretrained_models/gsv-v4-pretrained/s2Gv4.pth
