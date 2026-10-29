@@ -3,9 +3,13 @@
 本地运行的雪乃语音对话机器人：**DeepSeek 说话 → 雪乃音色朗读 → 立绘跟着情绪变**。
 
 - 声音：GPT-SoVITS v2 + 自己训练的雪乃音色（Strong / Weak 两档）
-- 大脑：DeepSeek（OpenAI 兼容协议），可换 ollama 本地模型兜底
+- 大脑：**默认本地 ollama**（qwen2:7b），可切 DeepSeek API，连不上自动兜底
 - 记忆：SQLite 全量落库 + 好感度持久化 + 关键词召回
-- 界面：Streamlit 网页版 / 零依赖终端版
+- 界面：零依赖网页版（响应式 + PWA + 手机可访问）/ Streamlit 版 / 终端版
+
+> **先读这两份文档**
+> - [docs/长期路线图.md](docs/长期路线图.md) —— 桌面应用、QQ/微信/抖音通道、看图看视频的完整分阶段计划
+> - [docs/移动端部署.md](docs/移动端部署.md) —— 手机怎么连（内网 / Tailscale / Cloudflare / 云服务器）
 
 ---
 
