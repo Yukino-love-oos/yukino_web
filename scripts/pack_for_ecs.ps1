@@ -125,11 +125,35 @@ else {
     Write-Host "  警告：找不到 site-packages，跳过 users.pth 修正" -ForegroundColor Yellow
 }
 
+# ---------------- 7) 生成校验清单（防止传坏/传漏）----------------
+Write-Host "=== 7/7 生成 MANIFEST.sha256（大文件算哈希，小文件只记大小）===" -ForegroundColor Cyan
+$manifestPath = Join-Path $OutDir 'MANIFEST.sha256'
+$allFiles = Get-ChildItem $Dest -Recurse -File -Force -ErrorAction SilentlyContinue
+$lines = New-Object System.Collections.Generic.List[string]
+$hashed = 0
+$t = [System.Diagnostics.Stopwatch]::StartNew()
+foreach ($f in $allFiles) {
+    $rel = $f.FullName.Substring($Dest.Length + 1).Replace('\', '/')
+    if ($f.Length -ge 1MB) {
+        $h = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash.ToLower()
+        $lines.Add("$h  $($f.Length)  $rel")
+        $hashed++
+    }
+    else {
+        # 小文件只记大小，避免为 5 万个小文件算哈希拖慢打包
+        $lines.Add("-                                 $($f.Length)  $rel")
+    }
+}
+[System.IO.File]::WriteAllLines($manifestPath, $lines, (New-Object System.Text.UTF8Encoding($false)))
+Write-Host ("  已生成 {0}" -f $manifestPath) -ForegroundColor Green
+Write-Host ("  条目 {0} 个（其中 {1} 个大文件带 SHA256），耗时 {2:N0} 秒" -f $lines.Count, $hashed, $t.Elapsed.TotalSeconds) -ForegroundColor DarkGray
+
 # ---------------- 报告 ----------------
 Write-Host ""
 Write-Host "=== 打包完成 ===" -ForegroundColor Green
 $s = Get-ChildItem $Dest -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum
 Write-Host ("  输出目录 : {0}" -f $Dest)
+Write-Host ("  校验清单 : {0}" -f $manifestPath)
 Write-Host ("  文件数   : {0}" -f $s.Count)
 Write-Host ("  总大小   : {0:N2} GB" -f ($s.Sum / 1GB))
 Write-Host ""
@@ -138,4 +162,7 @@ foreach ($d in Get-ChildItem $Dest -Directory) {
     Write-Host ("    {0,-18} {1,8:N2} GB" -f $d.Name, (Get-SizeGB $d.FullName))
 }
 Write-Host ""
-Write-Host "  上传前请先本地冒烟测试：用打包目录里的 runtime 启动 api_v2，确认能出声"
+Write-Host "  接下来：" -ForegroundColor Yellow
+Write-Host "    1) 上传到服务器（务必用可断点续传的方式，见 docs/ECS部署-Windows.md 步骤 3）"
+Write-Host "    2) 上传完成后在服务器执行： .\scripts\verify_pack.ps1 -Root C:\yukino_tts -Manifest C:\MANIFEST.sha256"
+Write-Host "    3) 冒烟测试：用 runtime 启动 api_v2，确认能出声再继续"

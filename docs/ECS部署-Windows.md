@@ -84,25 +84,120 @@ Compress-Archive -Path 'D:\Yukino\app','D:\Yukino\configs','D:\Yukino\persona','
                  -DestinationPath 'D:\Yukino\_pack_ecs\yukino_app.zip'
 ```
 
-### 步骤 3：上传
+### 步骤 3：上传（**热点必看：一定要能断点续传**）
 
-三种方式，按可靠性排序：
+#### 先说结论
 
-| 方式 | 速度 | 说明 |
-|---|---|---|
-| **阿里云 OSS 中转**（推荐） | 快 | 本机传 OSS → 服务器内网下载（内网流量免费） |
-| RDP 驱动器重定向 | 慢但简单 | 连接时勾选「本地资源 → 驱动器」，直接拖拽 |
-| rclone / WinSCP (SFTP) | 中 | 服务器需开 22 端口 |
+8.86 GB 走热点，**断线是常态**。传到 6 GB 断了就白传，这是这一步唯一的真正风险。
+所以**不要**用下面这两种方式：
 
-8.86 GB 按家用上行 30 Mbps 估算约 **40 分钟**。
+| ❌ 不要用 | 为什么 |
+|---|---|
+| 浏览器/网盘网页上传 | 断线就重来 |
+| RDP 盘符映射直接拖文件夹 | 断线后文件状态不明，且没有校验 |
+| `Compress-Archive` 压成一个大 zip 再传 | 断一个包整个作废，而且这堆文件本来就难压缩 |
 
-### 步骤 4：解压
+#### 推荐：阿里云 OSS 中转（断点续传 + 内网免费下载）
+
+好处：`ossutil` 支持断点续传、失败重试、分片上传；服务器从 OSS 拉取走**内网端点**，
+不计公网流量费且速度是内网带宽。
+
+```powershell
+# 1) 本机装 ossutil
+winget install Aliyun.ossutil        # 或用官方 ossutil64.exe
+ossutil config                        # 填 AccessKeyId / AccessKeySecret / Endpoint
+
+# 2) 建 bucket（一次即可，可与服务器不同地域但要选同地域更省）
+ossutil mb oss://yukino-deploy
+
+# 3) 上传整个打包目录（自动断点续传、并发分片）
+cd D:\Yukino
+ossutil cp -r .\_pack_ecs\yukino_tts\ oss://yukino-deploy/yukino_tts/ --jobs 4 --bigfile-threshold 100M
+ossutil cp .\_pack_ecs\MANIFEST.sha256 oss://yukino-deploy/MANIFEST.sha256
+
+# 4) 服务器上从内网端点下载（杭州实例用 oss-cn-hangzhou-internal.aliyuncs.com）
+ossutil cp -r oss://yukino-deploy/yukino_tts/ C:\yukino_tts\ --endpoint oss-cn-hangzhou-internal.aliyuncs.com --jobs 8
+ossutil cp oss://yukino-deploy/MANIFEST.sha256 C:\MANIFEST.sha256 --endpoint oss-cn-hangzhou-internal.aliyuncs.com
+```
+
+> 中断了怎么办？**直接重新执行同一条 `ossutil cp -r` 命令**，已传完的文件会跳过，只补没传的。
+
+#### 备选：SFTP（WinSCP / FileZilla）
+
+Windows Server 2022 自带 OpenSSH Server 能力，开启后即可用 SFTP：
+
+```powershell
+# 服务器上（管理员）
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+Start-Service sshd
+Set-Service sshd -StartupType Automatic
+New-NetFirewallRule -Name sshd -DisplayName 'OpenSSH' -Enabled True -Direction Inbound -Protocol TCP -LocalPort 22 -Action Allow
+```
+
+然后用 WinSCP 连服务器，**支持续传、可断点重试**。
+
+> ⚠️ 开了 22 端口后，安全组也要限制来源（同 3389 的规则）。
+
+#### 备选：服务器自己下载（最省热点流量）
+
+阿里云 **入方向流量免费且 100 Mbps**。所以更省的做法是：在服务器上下载 22 GB 整合包，
+你只上传「别人没有的文件」（约 550 MB：雪乃权重 533 MB + 参考音频 2 MB + 项目代码 16 MB）。
+缺点是服务器上要多做几步精简，且 40 GB 系统盘要边下边删。**热点流量特别紧张时才值得。**
+
+#### 上传耗时参考
+
+| 上行为 | 8.86 GB 预计 |
+|---|---|
+| 10 Mbps（4G 热点） | 约 2 小时 |
+| 30 Mbps（5G 热点） | 约 40 分钟 |
+| 100 Mbps（有线） | 约 12 分钟 |
+
+> 热点传大文件建议：**插着充电器 + 关掉手机省电/锁屏休眠 + 别切后台**，
+> 否则手机锁屏后热点可能降速或断流。
+
+---
+
+### 步骤 3.5：传完**必须先校验**（别跳）
+
+断线导致文件截断时，GPT-SoVITS 的表现往往是「启动卡住」或「推理报莫名其妙的错」，
+很难定位。所以启动前先跑校验：
 
 ```powershell
 # 服务器上
-mkdir C:\yukino_tts
+cd C:\yukino_app
+.\scripts\verify_pack.ps1 -Root C:\yukino_tts -Manifest C:\MANIFEST.sha256 -Quick
+```
+
+- `-Quick`：只查「文件是否齐 + 大小是否对」，约 1 分钟出结果
+- 不加 `-Quick`：额外对 239 个 ≥1MB 的大文件算 SHA256，约 1.5 分钟
+
+输出示例（正常）：
+
+```
+=== 结果 ===
+  通过        : 55937
+  缺失        : 0
+  大小不符    : 0
+  SHA256 不符 : 0          ← -Quick 模式下不显示这项
+校验通过，可以启动服务了。
+```
+
+发现 `大小不符` 或 `SHA256 不符` 的文件，**单独重传那几个文件**即可，不用整个重来。
+
+> 这个校验已在本地验证过：把 `default.ckpt` 截断成 50 MB 后，脚本准确报出
+> `大小不符：期望 155087677 实际 52428800` 并返回退出码 1。
+
+### 步骤 4：解压
+
+如果你采用「上传 `_pack_ecs\yukino_tts` 整个目录」的方式（OSS/SFTP），**不需要解压**，
+目录结构已经是最终的 `C:\yukino_tts\runtime\python.exe`。
+
+只有当你传的是压缩包时才需要解压：
+
+```powershell
+# 服务器上（仅当上传的是 zip）
 Expand-Archive -Path C:\Users\Administrator\Downloads\yukino_tts.zip -DestinationPath C:\
-# 解压后目录结构应为 C:\yukino_tts\runtime\python.exe 等
+# 解压后确认： C:\yukino_tts\runtime\python.exe 存在
 
 mkdir C:\yukino_app
 Expand-Archive -Path C:\Users\Administrator\Downloads\yukino_app.zip -DestinationPath C:\yukino_app
