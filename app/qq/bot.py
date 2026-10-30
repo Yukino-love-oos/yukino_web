@@ -33,8 +33,10 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -54,6 +56,9 @@ log = logging.getLogger(__name__)
 
 T_C2C = "C2C_MESSAGE_CREATE"
 T_GROUP_AT = "GROUP_AT_MESSAGE_CREATE"
+
+# 表情包目录（由 app/ui/assets/expressions 的立绘裁切而来）
+STICKER_DIR = Path(__file__).resolve().parents[1] / "ui" / "assets" / "stickers"
 
 
 def _env_bool(name: str, default: bool = True) -> bool:
@@ -101,6 +106,11 @@ class QQBot:
         self.max_voice = int(_env_str("QQ_MAX_VOICE", "2") or "2")
         # 短语间保留多长的停顿；实测 180ms 听感最自然（80/120/180 三档对比）
         self.pause_ms = int(_env_str("QQ_PAUSE_MS", "180") or "180")
+        # 分条发送：回复最多拆成几条、条间隔多少毫秒（模仿真人一句一句发）
+        self.text_parts = int(_env_str("QQ_TEXT_PARTS", "3") or "3")
+        self.text_gap = float(_env_str("QQ_TEXT_GAP", "0.6") or "0.6")
+        # 表情包开关
+        self.sticker_enabled = _env_bool("QQ_STICKER", True)
         self.settings = settings or load_settings()
         self.pipeline = None
         if not dry_run:
@@ -173,14 +183,78 @@ class QQBot:
         self._worker.start()
 
     # ---------------- 发送封装 ----------------
-    def _send_text(self, kind: str, target: str, mid: str, text: str) -> None:
+    def _send_text(self, kind: str, target: str, mid: str, text: str, seq: int = 1) -> None:
         if not text.strip():
             return
         if kind == "c2c":
-            self.api.send_c2c_text(target, text, mid, msg_seq=1)
+            self.api.send_c2c_text(target, text, mid, msg_seq=seq)
         else:
-            self.api.send_group_text(target, text, mid, msg_seq=1)
-        log.info("已回文字（%s 字）", len(text))
+            self.api.send_group_text(target, text, mid, msg_seq=seq)
+        log.info("已回文字（%s 字, seq=%s）", len(text), seq)
+
+    def _split_reply(self, text: str) -> list[str]:
+        """把一段回复拆成 2~3 条短消息，模仿真人分条发。
+
+        雪乃说话本来就短促（「ふん。」「……そう。」「別に。」），一次甩一大段
+        不像她。按句末标点和换行切，短段合并、超长段独占一条。
+        """
+        text = (text or "").strip()
+        if not text:
+            return []
+        limit = max(1, self.text_parts)
+        # 先按换行/句末标点切
+        pieces = re.split(r"[\n。！？!?]+", text)
+        pieces = [p.strip(" \t　、,，") for p in pieces]
+        pieces = [p for p in pieces if p]
+        if not pieces:
+            return [text]
+        if len(pieces) <= limit:
+            out = pieces
+        else:
+            # 合并到不超过 limit 段，尽量均分
+            out, cur = [], ""
+            per = math.ceil(len(pieces) / limit)
+            for p in pieces:
+                cur = (cur + "。" + p) if cur else p
+                if len([x for x in cur.split("。") if x]) >= per:
+                    out.append(cur)
+                    cur = ""
+            if cur:
+                out.append(cur)
+            out = out[:limit]
+        # 单段太短的补上句号，读起来完整
+        return [p if p[-1] in "。！？!?…" else p + "。" for p in out]
+
+    def _send_sticker(self, kind: str, target: str, mid: str, name: str, seq: int) -> bool:
+        """发一张表情包（图片走 file_type=1，和语音共用 msg_type=7）。"""
+        path = STICKER_DIR / ("%s.png" % name)
+        try:
+            data = path.read_bytes()
+        except OSError:
+            log.warning("表情包文件不存在：%s", path.name)
+            return False
+        try:
+            if kind == "c2c":
+                up = self.api.upload_c2c_file(
+                    target, file_type=1, file_data=data, file_name=path.name
+                )
+            else:
+                up = self.api.upload_group_file(
+                    target, file_type=1, file_data=data, file_name=path.name
+                )
+            info = (up or {}).get("file_info")
+            if not info:
+                log.warning("上传表情包没拿到 file_info：%s", up)
+                return False
+            if kind == "c2c":
+                self.api.send_c2c_media(target, info, mid, msg_seq=seq)
+            else:
+                self.api.send_group_media(target, info, mid, msg_seq=seq)
+            log.info("表情包已发：%s", name)
+            return True
+        except QQBotError as exc:
+            log.warning("发表情包失败：%s", exc)
+            return False
 
     def _publish_silk(self, data: bytes) -> str | None:
         """把 SILK 落到 web 服务的 data/qq_media 下，返回公网 URL。
@@ -279,14 +353,32 @@ class QQBot:
             return
 
         reply = (turn.zh or "").strip() or (turn.ja or "").strip()
-        try:
-            self._send_text(kind, target, mid, reply)
-        except QQBotError as exc:
-            log.warning("回文字失败：%s", exc)
-            return
-        log.info("文字已回，用时 %.1fs", time.time() - t0)
+        seq = 1
 
-        # ---- 第二段：补齐语音（尽力而为，失败不影响文字）----
+        # ---- 第一段：文字，分条发送（模仿真人一句一句发）----
+        segments = self._split_reply(reply)
+        sent_any = False
+        for i, seg in enumerate(segments):
+            try:
+                self._send_text(kind, target, mid, seg, seq=seq)
+                sent_any = True
+                seq += 1
+            except QQBotError as exc:
+                log.warning("回文字失败：%s", exc)
+                break
+            if i < len(segments) - 1:
+                time.sleep(self.text_gap)
+        if not sent_any:
+            return
+        log.info("文字已回（%s 条），用时 %.1fs", len(segments), time.time() - t0)
+
+        # ---- 第二段：表情包（廉价、立刻能发，放在语音前面）----
+        sticker = (getattr(turn, "sticker", "") or "").strip()
+        if sticker and self.sticker_enabled:
+            if self._send_sticker(kind, target, mid, sticker, seq):
+                seq += 1
+
+        # ---- 第三段：补齐语音（尽力而为，失败不影响文字和表情）----
         if not self.voice_enabled:
             return
         sentences = [s for s in getattr(turn, "sentences", []) if s and s.strip()]
@@ -295,7 +387,6 @@ class QQBot:
         if not silk.available_backends():
             log.info("没有 SILK 编码器，跳过语音（文字已送达）")
             return
-        seq = 2
         sent = 0
         for sentence in sentences[: self.max_voice]:
             try:
@@ -311,7 +402,8 @@ class QQBot:
                 log.info("语音已发（第 %s 条）", sent)
             else:
                 break
-        log.info("本轮完成：文字+%s 条语音，总用时 %.1fs", sent, time.time() - t0)
+        log.info("本轮完成：%s 条文字 + %s 表情 + %s 条语音，总用时 %.1fs",
+                 len(segments), 1 if sticker else 0, sent, time.time() - t0)
 
     # ---------------- 入口 ----------------
     def run(self) -> None:

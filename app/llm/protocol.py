@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 # ---- 标签扫描 ----
 _OPEN = re.compile(r"<([a-zA-Z_]+)>")
 _CLOSE = re.compile(r"</([a-zA-Z_]+)>")
-_TAGS = frozenset({"ja", "zh", "act", "mood", "aff"})
+_TAGS = frozenset({"ja", "zh", "act", "mood", "aff", "sticker"})
 
 # ---- 句子切分：只在真正的句末标点后切 ----
 # 故意不把 `…` / `。` 里的例外情况算进去：省略号在日语里多半是句中停顿
@@ -51,6 +51,20 @@ _JA = re.compile(r"[\u3040-\u30ff\u4e00-\u9fff]")
 _KANA = re.compile(r"[\u3040-\u30ff]")
 
 KNOWN_MOODS = ("calm", "tsundere", "soft", "angry", "shy", "tired")
+
+# 表情包名字与情绪同名：一张情绪一张图，免得模型还要记两套词表。
+# 图片在 app/ui/assets/stickers/<name>.png（由 expressions 立绘裁切而来）。
+KNOWN_STICKERS = KNOWN_MOODS
+
+# 模型可能写中文/日文名，归一化到英文键
+_STICKER_ALIASES = {
+    "冷静": "calm", "平静": "calm", "冷淡": "calm", "calm": "calm",
+    "傲娇": "tsundere", "ツンデレ": "tsundere", "tsundere": "tsundere",
+    "温柔": "soft", "柔和": "soft", "soft": "soft",
+    "生气": "angry", "愤怒": "angry", "怒": "angry", "angry": "angry",
+    "害羞": "shy", "腼腆": "shy", "shy": "shy",
+    "疲惫": "tired", "累": "tired", "tired": "tired",
+}
 
 
 def looks_japanese(text: str) -> bool:
@@ -101,6 +115,8 @@ class Turn:
     act: str = ""
     mood: str = "calm"
     aff: int = 0
+    # 可选表情包名（见 KNOWN_STICKERS）；空字符串表示这轮不发图
+    sticker: str = ""
     raw: str = ""
     sentences: list[str] = field(default_factory=list)
 
@@ -124,6 +140,7 @@ class Turn:
             "act": self.act,
             "mood": self.mood,
             "aff": self.aff,
+            "sticker": self.sticker,
         }
 
 
@@ -131,6 +148,29 @@ def _parse_affinity(raw: str) -> int:
     """`-2` / `+3` / `3` / `-2点` → int，解析不了就是 0。"""
     m = re.search(r"[-+]?\d+", raw or "")
     return int(m.group()) if m else 0
+
+
+def _parse_sticker(raw: str) -> str:
+    """把 `<sticker>` 内容归一化成 KNOWN_STICKERS 里的键；认不出就当没写。
+
+    模型可能写英文键，也可能写「傲娇」「生气」这类中文；还可能带上多余标点。
+    宁可静默丢弃，也不要把一个不存在的文件名传给发送端。
+    """
+    v = (raw or "").strip().lower().strip("。.、,，!！?？\"'`")
+    if not v:
+        return ""
+    if v in KNOWN_STICKERS:
+        return v
+    if v in _STICKER_ALIASES:
+        return _STICKER_ALIASES[v]
+    # 内容里夹了别的字（`<sticker>用傲娇那张</sticker>`）时做一次包含匹配
+    for alias, key in _STICKER_ALIASES.items():
+        if alias and alias in v:
+            return key
+    for key in KNOWN_STICKERS:
+        if key in v:
+            return key
+    return ""
 
 
 def _parse_mood(raw: str) -> str:
@@ -257,6 +297,10 @@ class ProtocolParser:
             self.turn.mood = _parse_mood(content)
         elif name == "aff":
             self.turn.aff = _parse_affinity(content)
+        elif name == "sticker":
+            parsed = _parse_sticker(content)
+            if parsed:
+                self.turn.sticker = parsed
 
         return out
 

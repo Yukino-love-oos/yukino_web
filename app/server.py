@@ -221,6 +221,12 @@ document.getElementById('f').addEventListener('submit',async ev=>{
                  (t.zh?'<div class="zh">'+esc(t.zh)+'</div>':'')+
                  '<div class="meta-line">好感度 '+(d.delta>0?'+':'')+d.delta+' → '+d.affinity+
                  ' · 首响 '+d.first_audio_s.toFixed(2)+'s</div>');
+      // 表情包：模型偶尔会带 <sticker>，网页上直接显示对应图片
+      if(t.sticker){
+        add('her','<img src="/assets/'+esc(t.sticker)+'.png" alt="'+esc(t.sticker)+
+                   '" style="width:132px;height:132px;object-fit:cover;border-radius:14px;'+
+                   'margin-top:6px;display:block">');
+      }
       for(const w of (d.notices||[])) add('her','<span style="color:#c9a66b">'+esc(w)+'</span>');
       if(d.audios&&d.audios.length) playAll(d.audios);
     }
@@ -396,7 +402,8 @@ class Handler(BaseHTTPRequestHandler):
     # ---------- 业务 ----------
     def _asset(self, name: str):
         name = Path(name).name  # 防目录穿越
-        for p in (ASSETS / "expressions" / name, ASSETS / name):
+        # 表情包（app/ui/assets/stickers/*.png）也给网页用
+        for p in (ASSETS / "expressions" / name, ASSETS / "stickers" / name, ASSETS / name):
             if p.is_file():
                 self._send(200, p.read_bytes(), "image/png",
                            {"Cache-Control": "public, max-age=86400"})

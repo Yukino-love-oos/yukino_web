@@ -190,7 +190,8 @@ class QQApi:
             payload["file_name"] = file_name
         return self._request("POST", f"/v2/groups/{group_openid}/files", payload)
 
-    def send_c2c_voice(self, openid: str, file_info: str, msg_id: str, *, msg_seq: int = 2) -> dict:
+    def send_c2c_media(self, openid: str, file_info: str, msg_id: str, *, msg_seq: int = 2) -> dict:
+        """发富媒体（msg_type=7）。语音和表情包走同一个接口，只是 file_info 来源不同。"""
         return self._request(
             "POST",
             f"/v2/users/{openid}/messages",
@@ -203,7 +204,7 @@ class QQApi:
             },
         )
 
-    def send_group_voice(self, group_openid: str, file_info: str, msg_id: str, *, msg_seq: int = 2) -> dict:
+    def send_group_media(self, group_openid: str, file_info: str, msg_id: str, *, msg_seq: int = 2) -> dict:
         return self._request(
             "POST",
             f"/v2/groups/{group_openid}/messages",
@@ -215,3 +216,10 @@ class QQApi:
                 "media": {"file_info": file_info},
             },
         )
+
+    # 语音就是富媒体的一种，保留语义化的别名，调用处读起来更清楚
+    def send_c2c_voice(self, openid: str, file_info: str, msg_id: str, *, msg_seq: int = 2) -> dict:
+        return self.send_c2c_media(openid, file_info, msg_id, msg_seq=msg_seq)
+
+    def send_group_voice(self, group_openid: str, file_info: str, msg_id: str, *, msg_seq: int = 2) -> dict:
+        return self.send_group_media(group_openid, file_info, msg_id, msg_seq=msg_seq)
