@@ -145,7 +145,7 @@ class Pipeline:
         return None
 
     # ---------------- 主流程 ----------------
-    def respond(self, user_text: str) -> Iterator[dict]:
+    def respond(self, user_text: str, *, speak: bool = True) -> Iterator[dict]:
         """产出事件流。
 
         事件类型：
@@ -153,6 +153,10 @@ class Pipeline:
           {"type": "done", "turn": Turn, "delta": int, "reason": str,
                           "affinity": int, "stats": dict}
           {"type": "error", "message": str}
+
+        speak=False 时只走文本、完全跳过 TTS（audio 恒为 None）。
+        QQ/微信这类「先秒回文字、语音后补」的入口需要这个开关：
+        CPU 服务器上 TTS 是 RT 6~7 倍，若边生成边合成，文字要等一分钟才发得出去。
         """
         parser = ProtocolParser()
         index = 0
@@ -171,7 +175,7 @@ class Pipeline:
                 lang_bad = True
                 log.warning("跳过非日语台词，不做语音合成：%s", sentence[:40])
                 return None
-            audio = self.speak(sentence, first=(index == 0))
+            audio = self.speak(sentence, first=(index == 0)) if speak else None
             ev = {"type": "sentence", "text": sentence, "audio": audio, "index": index}
             index += 1
             return ev
@@ -204,7 +208,7 @@ class Pipeline:
             if fixed is not None:
                 turn = fixed
                 for sentence in turn.sentences:
-                    audio = self.speak(sentence, first=(index == 0))
+                    audio = self.speak(sentence, first=(index == 0)) if speak else None
                     yield {
                         "type": "sentence",
                         "text": sentence,
