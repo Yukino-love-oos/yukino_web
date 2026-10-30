@@ -45,6 +45,7 @@ from urllib.parse import quote
 
 from ..config import load_settings
 from ..pipeline import build_pipeline
+from ..tts.silence import squeeze_pauses
 from . import silk
 from .api import INTENT_GROUP_AND_C2C_EVENT, QQApi, QQBotError
 from .gateway import QQGateway
@@ -230,6 +231,14 @@ class QQBot:
         return self.api.upload_group_file(target, file_type=3, url=url)
 
     def _send_voice(self, kind: str, target: str, mid: str, wav: bytes, seq: int) -> bool:
+        # 先压掉合成时插入的长停顿：实测能把 52% 静音压到 28%，
+        # 听感从「一顿一顿」变成连贯的短句（见 app/tts/silence.py 的实测数据）。
+        try:
+            compressed = squeeze_pauses(wav)
+            if compressed:
+                wav = compressed
+        except Exception as exc:  # noqa: BLE001
+            log.debug("停顿压缩失败，用原始音频：%r", exc)
         data = silk.encode_wav_to_silk(wav)
         if not data:
             return False
