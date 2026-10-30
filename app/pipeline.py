@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Iterator
 
 from .config import Settings
+from .llm import rules
 from .llm.persona import Persona, render_system_prompt
 from .llm.protocol import ProtocolParser, Turn, looks_japanese
 from .state import memory
@@ -90,11 +91,17 @@ class Pipeline:
 
     # ---------------- 组 prompt ----------------
     def build_messages(self, user_text: str) -> list[dict]:
-        hits = memory.recall(self.session.conn, user_text, k=3)
+        # 记忆召回：关键词相关度 × 新鲜度（半衰期 30 天）× 类型重要度
+        hits = memory.recall(self.session.conn, user_text, k=self.settings.memory_k)
+        # 三层人格：L1 = 人格卡；L2/L3 = persona/rules/{owner,self}.md
+        layers = rules.load_layers(self.settings.persona_path)
         sys_prompt = render_system_prompt(
             self.persona,
             affinity=self.session.affinity,
-            memory_block=memory.build_memory_block(hits),
+            memory_block=memory.build_memory_block(hits, max_chars=self.settings.memory_max_chars),
+            # 心情带衰减：3 小时没聊，愤怒/害羞会自己回落，不会一直挂着脸
+            mood_hint=self.session.mood_hint(),
+            extra_rules=rules.render(layers),
         )
         msgs = [{"role": "system", "content": sys_prompt}]
 

@@ -403,7 +403,9 @@ class Handler(BaseHTTPRequestHandler):
     def _asset(self, name: str):
         name = Path(name).name  # 防目录穿越
         # 表情包（app/ui/assets/stickers/*.png）也给网页用
-        for p in (ASSETS / "expressions" / name, ASSETS / "stickers" / name, ASSETS / name):
+        # stickers 必须排在 expressions 前面：两边文件名相同（calm.png 等），
+        # expressions 是 600x1156 的原立绘，当表情包发出去太大。
+        for p in (ASSETS / "stickers" / name, ASSETS / "expressions" / name, ASSETS / name):
             if p.is_file():
                 self._send(200, p.read_bytes(), "image/png",
                            {"Cache-Control": "public, max-age=86400"})
@@ -437,7 +439,7 @@ class Handler(BaseHTTPRequestHandler):
         ]
         self._json({
             **pipe.session.stats(),
-            "mood": pipe.session.get("mood", "calm") or "calm",
+            "mood": pipe.session.current_mood().get("mood", "calm"),
             "provider": getattr(pipe.llm, "provider", pipe.settings.llm_provider),
             "model": getattr(pipe.llm, "model", pipe.settings.model),
             "tts_ok": pipe.tts.health(timeout=1.5),
@@ -481,7 +483,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "没有生成回复"}, 500)
             return
         try:
-            pipe.session.set("mood", turn.expression)
+            pipe.session.set_mood(turn.expression)
         except Exception:
             pass
 

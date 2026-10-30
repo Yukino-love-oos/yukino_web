@@ -134,6 +134,9 @@ class Settings:
     tts_stream: bool = False
     use_tts_cache: bool = True
     prefetch_first_sentence: bool = True
+    # 记忆召回：最多注入几条、最多占多少字（预算，防止 prompt 被记忆撑爆）
+    memory_k: int = 6
+    memory_max_chars: int = 800
 
     # ---- TTS 采样参数 ----
     tts_top_k: int = 5
@@ -222,6 +225,8 @@ def load_settings(dotenv: Path | None = None) -> Settings:
         tts_stream=_as_bool(get("TTS_STREAM", "false"), False),
         use_tts_cache=_as_bool(get("TTS_CACHE", "true"), True),
         prefetch_first_sentence=_as_bool(get("PREFETCH_FIRST_SENTENCE", "true"), True),
+          memory_k=int(get("MEMORY_K", "6")),
+          memory_max_chars=int(get("MEMORY_MAX_CHARS", "800")),
         tts_top_k=int(get("TTS_TOP_K", "5")),
         tts_top_p=float(get("TTS_TOP_P", "1.0")),
         tts_temperature=float(get("TTS_TEMPERATURE", "1.0")),

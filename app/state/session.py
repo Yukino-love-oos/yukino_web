@@ -21,6 +21,7 @@ import sqlite3
 import unicodedata
 
 from ..llm.protocol import Turn
+from . import mood as mood_mod
 
 _PUNCT = re.compile(r"[\s\u3000、。．，,.！？!?…「」『』（）()【】\[\]<>《》~〜ー\-—・:：;；\"'`*#]+")
 
@@ -64,6 +65,30 @@ class Session:
             return int(self.get(key, str(default)))
         except ValueError:
             return default
+
+    def get_float(self, key: str, default: float = 0.0) -> float:
+        try:
+            return float(self.get(key, str(default)))
+        except ValueError:
+            return default
+
+    # ---------------- 心情（带衰减） ----------------
+    def set_mood(self, mood: str, *, now: float | None = None) -> dict:
+        """记录本轮情绪。存的是「起点」，读取时再按时间衰减。"""
+        prev = {"mood": self.get("mood", "calm"), "mood_at": self.get_float("mood_at", 0.0)}
+        state = mood_mod.blend(prev, mood, now=now)
+        self.set("mood", state["mood"])
+        self.set("mood_at", state["mood_at"])
+        self.set("mood_intensity", state["intensity"])
+        return state
+
+    def current_mood(self, *, now: float | None = None) -> dict:
+        """当前残余情绪。距上次设定越久强度越低，低于阈值自动回到 calm。"""
+        return mood_mod.decay(self.get("mood", "calm"),
+                              self.get_float("mood_at", 0.0), now=now)
+
+    def mood_hint(self) -> str:
+        return mood_mod.describe(self.current_mood())
 
     # ---------------- 好感度 ----------------
     @property

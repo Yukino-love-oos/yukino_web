@@ -78,8 +78,13 @@ def render_system_prompt(
     affinity: int,
     memory_block: str = "",
     mood_hint: str = "",
+    extra_rules: str = "",
 ) -> str:
-    """渲染 system prompt。所有可变部分都由外部注入，人格卡里不写死数值。"""
+    """渲染 system prompt。所有可变部分都由外部注入，人格卡里不写死数值。
+
+    extra_rules 是三层人格里的 L2/L3（主人补充 + 她自己的相处偏好），
+    由 app/llm/rules.py 读出来；没有就是空字符串，不占位置。
+    """
     band = persona.band(affinity)
     speech = persona.speech or {}
 
@@ -87,8 +92,13 @@ def render_system_prompt(
     if memory_block.strip():
         mem = "\n【你记得的事】\n" + memory_block.strip() + "\n"
 
+    rules = ""
+    if (extra_rules or "").strip():
+        rules = "\n" + extra_rules.strip() + "\n"
+
     return persona.system_template.format(
         identity=persona.identity,
+        extra_rules=rules,
         affinity=affinity,
         band_label=band.get("label", ""),
         band_tone=band.get("tone", ""),
