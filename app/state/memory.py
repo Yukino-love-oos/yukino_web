@@ -146,6 +146,147 @@ def build_memory_block(memories: list[dict], *, max_chars: int = 800) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------- 增量写回
+# 「记忆写回」= 把对话压缩成关于用户的稳定事实存下来。
+# 三个必须做对的点：
+#   1. 增量：记录已经摘要到哪一条 turn，不重复摘要（否则记忆越攒越多重复）
+#   2. 分批：一次几十轮，prompt 不会太长，失败也只丢一批
+#   3. 带类型：事实/偏好/事件分开存，直接喂给上面的重要度打分
+
+_SUMMARY_KEY = "memory_summary_until_id"
+
+# 类型标记 -> memory.kind
+_SUMMARY_KINDS = {
+    "事实": "fact",
+    "偏好": "preference",
+    "事件": "event",
+    "摘要": "summary",
+}
+
+_SUMMARY_PROMPT = (
+    "下面是一段对话记录。请只从里面提取关于「用户」的**稳定信息**"
+    "（长期成立的事实、明确的喜好、发生过的重要事件）。\n"
+    "每条一行，严格用这个格式：\n"
+    "事实|一句话\n"
+    "偏好|一句话\n"
+    "事件|一句话\n"
+    "最多 4 条。没有值得记的就输出「无」。只输出这些行，不要解释、不要编号。\n\n"
+)
+
+
+def last_summarized_id(conn: sqlite3.Connection) -> int:
+    row = conn.execute("SELECT v FROM meta WHERE k = ?", (_SUMMARY_KEY,)).fetchone()
+    try:
+        return int(row["v"]) if row else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def set_last_summarized_id(conn: sqlite3.Connection, turn_id: int) -> None:
+    conn.execute(
+        "INSERT INTO meta(k, v) VALUES(?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
+        (_SUMMARY_KEY, str(int(turn_id))),
+    )
+    conn.commit()
+
+
+def pending_turns(conn: sqlite3.Connection, after_id: int = 0, limit: int = 200) -> list[dict]:
+    """取还没摘要过的对话轮次（按 id 升序，保证时间顺序）。"""
+    rows = conn.execute(
+        "SELECT id, ts, user_text, ja, zh FROM turns WHERE id > ? ORDER BY id ASC LIMIT ?",
+        (int(after_id), int(limit)),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _parse_summary_lines(raw: str) -> list[tuple[str, str]]:
+    """把模型输出解析成 [(kind, text), ...]。认不出的行直接丢弃。"""
+    out: list[tuple[str, str]] = []
+    for line in (raw or "").splitlines():
+        line = line.strip().strip("-*·").strip()
+        if not line or line in ("无", "沒有", "没有"):
+            continue
+        if "|" not in line:
+            continue
+        tag, _, text = line.partition("|")
+        tag = tag.strip().strip("：:").strip()
+        text = text.strip()
+        if not text:
+            continue
+        kind = _SUMMARY_KINDS.get(tag)
+        if kind is None:
+            # 允许模型写成 fact/preference/event
+            low = tag.lower()
+            kind = low if low in ("fact", "preference", "event", "summary") else None
+        if kind is None:
+            continue
+        out.append((kind, text))
+    return out
+
+
+def _exists_similar(conn: sqlite3.Connection, text: str) -> bool:
+    key = normalize(text)[:40]
+    if not key:
+        return False
+    for r in conn.execute("SELECT text FROM memory ORDER BY id DESC LIMIT 400").fetchall():
+        if normalize(r["text"])[:40] == key:
+            return True
+    return False
+
+
+_NOTHING_MARKERS = ("无", "沒有", "没有", "none", "nothing", "n/a")
+
+
+def is_nothing_reply(raw: str) -> bool:
+    """模型明确表示「没什么值得记的」。
+
+    这跟「输出跑偏了」是两回事，必须分开：
+      · 无  -> 是有效结论，游标要推进（否则每 2 小时重试同一批空对话，白烧 API）
+      · 乱  -> 不推进，下次重试
+    """
+    text = (raw or "").strip().strip("。.").strip().lower()
+    return text in _NOTHING_MARKERS
+
+
+def summarize_turns(conn: sqlite3.Connection, llm, turns: list[dict], *,
+                    max_items: int = 4) -> dict:
+    """把一批对话压成记忆写入。
+
+    llm 需要提供 `complete(messages) -> str`。
+
+    返回 {"written": [...], "status": "ok"|"nothing"|"unparsed"|"error", "raw": str}
+    调用方据 status 决定要不要推进游标：
+      ok / nothing -> 推进（结论有效，只是可能没东西可记）
+      unparsed / error -> 不推进，下次重试
+    """
+    if not turns:
+        return {"written": [], "status": "nothing", "raw": ""}
+    transcript = "\n".join(
+        "用户：%s\n雪乃：%s" % (t.get("user_text") or "", t.get("zh") or t.get("ja") or "")
+        for t in turns
+    )
+    prompt = _SUMMARY_PROMPT + transcript
+    try:
+        raw = (llm.complete([{"role": "user", "content": prompt}]) or "").strip()
+    except Exception:  # noqa: BLE001
+        return {"written": [], "status": "error", "raw": ""}
+
+    items = _parse_summary_lines(raw)
+    if not items:
+        status = "nothing" if is_nothing_reply(raw) else "unparsed"
+        return {"written": [], "status": status, "raw": raw}
+
+    written: list[dict] = []
+    for kind, text in items[:max_items]:
+        if _exists_similar(conn, text):
+            continue
+        mid = add(conn, kind, text)
+        if mid:
+            written.append({"id": mid, "kind": kind, "text": text})
+    # 解析成功但全被判为重复 —— 也算有效结论（这批确实没新信息）
+    return {"written": written, "status": "ok", "raw": raw}
+
+
 def summarize_day(conn: sqlite3.Connection, llm, day: str | None = None, limit: int = 60) -> str:
     """把一天（或最近 limit 轮）的对话压成 1~3 条事实写进 memory。
 
