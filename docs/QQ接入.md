@@ -74,10 +74,13 @@ for sent in turn.sentences[:2]:
 |---|---|---|
 | 1 | WebSocket 用不了现成库（要保持零依赖） | 自己实现 RFC 6455 最小客户端：掩码、126/127 长度、分片、ping/pong。测试覆盖帧编码 |
 | 2 | `pilk.encode()` 签名不明 | **是文件式 API**：`pilk.encode(pcm_path, silk_path, pcm_rate)`。返回值不是状态码（实测返回 3），判据是产出文件存在且以 `#!SILK_V3` 开头 |
-| 3 | SILK 需要 24 kHz，TTS 输出 32 kHz | 用 stdlib `audioop.ratecv` 重采样，不引第三方库 |
-| 4 | QQ 断线重连会重推事件 | 用 message id 做幂等去重（10 分钟窗口） |
-| 5 | 远端的 `powershell -Command "..."` 在 cmd 手里会被打散 | 一律 **scp 脚本文件 + `-File` 执行**，不要内联引号 |
-| 6 | `.env` 出现非 ASCII 会让 Python 用 cp936 解码失败 | `.env` / yaml / ps1 一律纯 ASCII |
+| **3** | **SILK 容器格式错，QQ 报 `850019 富媒体文件格式不支持`** | 这个坑花了最久。实测三种容器：<br>· 标准 `#!SILK_V3` + frames → ❌ 850019<br>· `\x02` + frames（丢魔数）→ ❌ 40093008<br>· **`\x02` + `#!SILK_V3` + frames（10 字节头）→ ✅ 通过**<br>线索来自 `pilk` 自己：`get_duration` 判断首字节 `0x02` 后 `seek(10)`，说明腾讯头是 10 字节 |
+| 4 | SILK 需要 24 kHz，TTS 输出 32 kHz | 用 stdlib `audioop.ratecv` 重采样，不引第三方库 |
+| 5 | 一开始以为语音要用 `url`（base64 不支持） | 实测 `file_data`(base64) 与 `url` 都能工作，前提是容器格式对。默认走 base64，失败再退回公网 url（`/media/<name>?t=<token>` 路由） |
+| 6 | QQ 断线重连会重推事件 | 用 message id 做幂等去重（10 分钟窗口） |
+| 7 | 远端的 `powershell -Command "..."` 在 cmd 手里会被打散 | 一律 **scp 脚本文件 + `-File` 执行**，不要内联引号 |
+| 8 | `.env` 出现非 ASCII 会让 Python 用 cp936 解码失败 | `.env` / yaml / ps1 一律纯 ASCII |
+| 9 | 控制台看远端日志是乱码 | PowerShell 的 `*>` 重定向写 UTF-16LE，中文全乱。把日志文件 scp 回本地按 UTF-16 解码再读 |
 
 ## 6. 配置项
 

@@ -154,8 +154,26 @@ def available_backends() -> list[str]:
     return names
 
 
-def encode_wav_to_silk(wav_bytes: bytes) -> bytes | None:
-    """WAV 字节 -> SILK 字节；没有可用编码器时返回 None。"""
+def to_tencent(data: bytes) -> bytes:
+    """标准 SILK -> 腾讯（QQ/微信）容器。
+
+    实测结论（这一条踩了很久）：
+      · 标准容器 `#!SILK_V3` + frames            -> QQ 返回 850019「富媒体文件格式不支持」
+      · `\\x02` + frames（丢掉魔数）              -> QQ 返回 40093008
+      · **`\\x02` + `#!SILK_V3` + frames**        -> ✅ 通过，返回 file_info
+    也就是腾讯的头是 10 字节：一个 0x02 前缀 + 9 字节魔法。
+    pilk 源码里 get_duration 读首字节判断 0x02 后 seek(10)，正是这么回事。
+    """
+    if data.startswith(b"#!SILK_V3"):
+        return b"\x02" + data
+    return data
+
+
+def encode_wav_to_silk(wav_bytes: bytes, *, tencent: bool = True) -> bytes | None:
+    """WAV 字节 -> SILK 字节；没有可用编码器时返回 None。
+
+    tencent=True（默认）输出 QQ/微信能直接吃的 0x02 前缀容器。
+    """
     if not wav_bytes:
         return None
     try:
@@ -167,6 +185,6 @@ def encode_wav_to_silk(wav_bytes: bytes) -> bytes | None:
         data = encoder(pcm)
         if data:
             log.debug("SILK 编码成功（%s，%s 字节）", encoder.__name__, len(data))
-            return data
+            return to_tencent(data) if tencent else data
     log.info("没有可用的 SILK 编码器，本次只发文字（见 app/qq/silk.py 的说明）")
     return None

@@ -39,6 +39,9 @@ import sys
 import threading
 import time
 import traceback
+import uuid
+from pathlib import Path
+from urllib.parse import quote
 
 from ..config import load_settings
 from ..pipeline import build_pipeline
@@ -176,28 +179,69 @@ class QQBot:
             self.api.send_group_text(target, text, mid, msg_seq=1)
         log.info("已回文字（%s 字）", len(text))
 
+    def _publish_silk(self, data: bytes) -> str | None:
+        """把 SILK 落到 web 服务的 data/qq_media 下，返回公网 URL。
+
+        为什么需要这一步：QQ 的富媒体上传接口对 base64(file_data) 送语音
+        会返回 850019「富媒体文件格式不支持」，必须给一个腾讯服务器能拉取的
+        `url`。我们本来就有公网 web 服务（8501），顺手当临时文件服务器用。
+        """
+        base = _env_str("QQ_MEDIA_BASE")
+        if not base:
+            return None
+        token = _env_str("YUKINO_TOKEN")
+        media_dir = Path(__file__).resolve().parents[2] / "data" / "qq_media"
+        try:
+            media_dir.mkdir(parents=True, exist_ok=True)
+            name = "y%s.silk" % uuid.uuid4().hex
+            (media_dir / name).write_bytes(data)
+            # 只留最近 16 个，避免长期堆积
+            try:
+                olds = sorted(media_dir.glob("*.silk"), key=lambda p: p.stat().st_mtime)
+                for old in olds[:-16]:
+                    old.unlink()
+            except OSError:
+                pass
+        except OSError as exc:
+            log.warning("写临时 SILK 失败：%r", exc)
+            return None
+        url = "%s/media/%s" % (base.rstrip("/"), name)
+        if token:
+            url += "?t=" + quote(token, safe="")
+        return url
+
+    def _upload_voice(self, kind: str, target: str, data: bytes) -> dict:
+        """先走 base64(file_data)（实测可通），失败再退回公网 url。"""
+        try:
+            if kind == "c2c":
+                return self.api.upload_c2c_file(
+                    target, file_type=3, file_data=data, file_name="yukino.silk"
+                )
+            return self.api.upload_group_file(
+                target, file_type=3, file_data=data, file_name="yukino.silk"
+            )
+        except QQBotError as exc:
+            log.warning("base64 上传语音失败，改用公网 url：%s", exc)
+        url = self._publish_silk(data)
+        if not url:
+            raise QQBotError("base64 与 url 两种上传方式都不可用")
+        if kind == "c2c":
+            return self.api.upload_c2c_file(target, file_type=3, url=url)
+        return self.api.upload_group_file(target, file_type=3, url=url)
+
     def _send_voice(self, kind: str, target: str, mid: str, wav: bytes, seq: int) -> bool:
         data = silk.encode_wav_to_silk(wav)
         if not data:
             return False
         try:
+            up = self._upload_voice(kind, target, data)
+            info = (up or {}).get("file_info")
+            if not info:
+                log.warning("上传语音没拿到 file_info：%s", up)
+                return False
             if kind == "c2c":
-                up = self.api.upload_c2c_file(
-                    target, file_type=3, file_data=data, file_name="yukino.silk"
-                )
-                info = (up or {}).get("file_info")
-                if not info:
-                    log.warning("上传语音没拿到 file_info：%s", up)
-                    return False
                 self.api.send_c2c_voice(target, info, mid, msg_seq=seq)
             else:
-                up = self.api.upload_group_file(
-                    target, file_type=3, file_data=data, file_name="yukino.silk"
-                )
-                info = (up or {}).get("file_info")
-                if not info:
-                    log.warning("上传语音没拿到 file_info：%s", up)
-                    return False
                 self.api.send_group_voice(target, info, mid, msg_seq=seq)
             return True
         except QQBotError as exc:

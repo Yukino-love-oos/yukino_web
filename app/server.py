@@ -43,6 +43,9 @@ from .pipeline import build_pipeline
 log = logging.getLogger("yukino.server")
 
 ASSETS = Path(__file__).resolve().parent / "ui" / "assets"
+# QQ 语音消息需要「公网可访问的 URL」而不是 base64，所以把 SILK 临时文件放在这里
+# 由 /media/<name>?t=<token> 提供，机器人发完就删（见 app/qq/bot.py）。
+MEDIA = Path(__file__).resolve().parent.parent / "data" / "qq_media"
 
 _PIPELINE = None
 _LOCK = threading.Lock()
@@ -368,6 +371,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/state":
             self._state()
             return
+        if path.startswith("/media/"):
+            self._media(path[len("/media/"):])
+            return
         self._send(404, b"not found", "text/plain; charset=utf-8")
 
     def do_POST(self):
@@ -396,6 +402,21 @@ class Handler(BaseHTTPRequestHandler):
                            {"Cache-Control": "public, max-age=86400"})
                 return
         self._send(404, b"no asset", "text/plain")
+
+    def _media(self, name: str):
+        """给 QQ 拉取语音 SILK 用。只允许 data/qq_media 下的单层文件名。"""
+        name = Path(name).name
+        if not name or name.startswith("."):
+            self._send(404, b"no media", "text/plain")
+            return
+        p = MEDIA / name
+        try:
+            data = p.read_bytes()
+        except OSError:
+            self._send(404, b"no media", "text/plain")
+            return
+        ctype = "audio/silk" if name.endswith(".silk") else "application/octet-stream"
+        self._send(200, data, ctype, {"Cache-Control": "no-store"})
 
     def _state(self):
         try:
