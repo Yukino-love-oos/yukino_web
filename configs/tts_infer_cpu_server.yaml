@@ -1,56 +1,34 @@
+# ============================================================
+#  Yukinoshita Yukino - cloud server CPU inference config
+#  (relative paths; run with cwd = GPT-SoVITS root)
+#
+#  Start (from C:\yukino_tts):
+#    "C:\Program Files\Python39\python.exe" api_v2.py -a 127.0.0.1 -p 9881 \
+#        -c C:\yukino_app\configs\tts_infer_cpu_server.yaml
+#
+#  IMPORTANT: version MUST be v2.
+#  Our weights were trained in 2024-05 (GPT-SoVITS v2 era).
+#  Using v1 or v2Pro will fail to load or produce wrong timbre.
+#
+#  NOTE: this file is kept pure ASCII on purpose. Python on a Chinese
+#  Windows reads files with the system codec (cp936); UTF-8 comments
+#  would raise UnicodeDecodeError when the YAML is loaded.
+#
+#  TTS_Config uses configs.get("custom", configs["v2"]), so only the
+#  custom block is needed here; other presets fall back to built-ins.
+# ============================================================
+
 custom:
-  bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
-  cnhuhbert_base_path: GPT_SoVITS/pretrained_models/chinese-hubert-base
+  # No GPU: force CPU. Half precision is not supported on CPU.
   device: cpu
   is_half: false
-  t2s_weights_path: GPT_weights/default.ckpt
-  version: v1
-  vits_weights_path: SoVITS_weights/Yukino_Strong.pth
-v1:
-  bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
-  cnhuhbert_base_path: GPT_SoVITS/pretrained_models/chinese-hubert-base
-  device: cpu
-  is_half: false
-  t2s_weights_path: GPT_SoVITS/pretrained_models/s1bert25hz-2kh-longer-epoch=68e-step=50232.ckpt
-  version: v1
-  vits_weights_path: GPT_SoVITS/pretrained_models/s2G488k.pth
-v2:
-  bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
-  cnhuhbert_base_path: GPT_SoVITS/pretrained_models/chinese-hubert-base
-  device: cpu
-  is_half: false
-  t2s_weights_path: GPT_SoVITS/pretrained_models/gsv-v2final-pretrained/s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt
+
   version: v2
-  vits_weights_path: GPT_SoVITS/pretrained_models/gsv-v2final-pretrained/s2G2333k.pth
-v2Pro:
+
+  # Yukino voice weights (relative to the GPT-SoVITS root)
+  t2s_weights_path: GPT_weights/default.ckpt
+  vits_weights_path: SoVITS_weights/Yukino_Strong.pth
+
+  # Base models
   bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
   cnhuhbert_base_path: GPT_SoVITS/pretrained_models/chinese-hubert-base
-  device: cpu
-  is_half: false
-  t2s_weights_path: GPT_SoVITS/pretrained_models/s1v3.ckpt
-  version: v2Pro
-  vits_weights_path: GPT_SoVITS/pretrained_models/v2Pro/s2Gv2Pro.pth
-v2ProPlus:
-  bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
-  cnhuhbert_base_path: GPT_SoVITS/pretrained_models/chinese-hubert-base
-  device: cpu
-  is_half: false
-  t2s_weights_path: GPT_SoVITS/pretrained_models/s1v3.ckpt
-  version: v2ProPlus
-  vits_weights_path: GPT_SoVITS/pretrained_models/v2Pro/s2Gv2ProPlus.pth
-v3:
-  bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
-  cnhuhbert_base_path: GPT_SoVITS/pretrained_models/chinese-hubert-base
-  device: cpu
-  is_half: false
-  t2s_weights_path: GPT_SoVITS/pretrained_models/s1v3.ckpt
-  version: v3
-  vits_weights_path: GPT_SoVITS/pretrained_models/s2Gv3.pth
-v4:
-  bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large
-  cnhuhbert_base_path: GPT_SoVITS/pretrained_models/chinese-hubert-base
-  device: cpu
-  is_half: false
-  t2s_weights_path: GPT_SoVITS/pretrained_models/s1v3.ckpt
-  version: v4
-  vits_weights_path: GPT_SoVITS/pretrained_models/gsv-v4-pretrained/s2Gv4.pth
