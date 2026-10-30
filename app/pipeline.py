@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Iterator
 
 from .config import Settings
-from .llm import rules
+from .llm import lifecycle, rules
 from .llm.persona import Persona, render_system_prompt
 from .llm.protocol import ProtocolParser, Turn, looks_japanese
 from .state import memory
@@ -90,14 +90,29 @@ class Pipeline:
         return data
 
     # ---------------- 组 prompt ----------------
+    def _lifeview(self):
+        """时间轮：按今天的日期现算年龄，并把人生经历压成一段文本。
+
+        年龄不写死，是因为写死「18 岁」一年后就露馅了；
+        这里每次请求都按生日重新算，过了生日自动加一岁。
+        """
+        life = lifecycle.Life.from_dict(getattr(self.persona, "life", None))
+        if life is None:
+            return {}, "", ""
+        snap = life.snapshot()
+        return snap, lifecycle.render_age_hint(snap), lifecycle.render_life_block(self.persona.life)
+
     def build_messages(self, user_text: str) -> list[dict]:
         # 记忆召回：关键词相关度 × 新鲜度（半衰期 30 天）× 类型重要度
         hits = memory.recall(self.session.conn, user_text, k=self.settings.memory_k)
         # 三层人格：L1 = 人格卡；L2/L3 = persona/rules/{owner,self}.md
         layers = rules.load_layers(self.settings.persona_path)
+        snap, age_hint, life_block = self._lifeview()
         sys_prompt = render_system_prompt(
             self.persona,
             affinity=self.session.affinity,
+            age_hint=age_hint,
+            life_block=life_block,
             memory_block=memory.build_memory_block(hits, max_chars=self.settings.memory_max_chars),
             # 心情带衰减：3 小时没聊，愤怒/害羞会自己回落，不会一直挂着脸
             mood_hint=self.session.mood_hint(),

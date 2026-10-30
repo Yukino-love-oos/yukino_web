@@ -25,6 +25,8 @@ class Persona:
     greetings: list[str] = field(default_factory=list)
     few_shot: list[dict] = field(default_factory=list)
     system_template: str = ""
+    # 人生经历与生日（时间轮的输入），结构见 persona/yukino.json 的 life 段
+    life: dict = field(default_factory=dict)
     raw: dict = field(default_factory=dict, repr=False)
 
     # ---------- 好感度分段 ----------
@@ -64,6 +66,7 @@ def load_persona(path: Path) -> Persona:
         greetings=list(data.get("greetings", [])),
         few_shot=list(data.get("few_shot", [])),
         system_template=data.get("system_template", ""),
+        life=dict(data.get("life") or {}),
         raw=data,
     )
 
@@ -79,6 +82,8 @@ def render_system_prompt(
     memory_block: str = "",
     mood_hint: str = "",
     extra_rules: str = "",
+    age_hint: str = "",
+    life_block: str = "",
 ) -> str:
     """渲染 system prompt。所有可变部分都由外部注入，人格卡里不写死数值。
 
@@ -99,6 +104,8 @@ def render_system_prompt(
     return persona.system_template.format(
         identity=persona.identity,
         extra_rules=rules,
+        age_hint=age_hint or "",
+        life_block=(life_block or "").strip(),
         affinity=affinity,
         band_label=band.get("label", ""),
         band_tone=band.get("tone", ""),

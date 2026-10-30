@@ -32,9 +32,28 @@ def rules_dir(persona_path: Path) -> Path:
     return Path(persona_path).resolve().parent / "rules"
 
 
+def _strip_md(text: str) -> str:
+    """去掉给人看的 Markdown 噪音（标题、引用、空行）。
+
+    这些文件是主人维护的，里面会有 `# 标题` 和 `> 说明`。
+    直接塞进 prompt 会让模型把说明当成规矩的一部分，白白占 token。
+    所以只保留真正的条目行。
+    """
+    kept: list[str] = []
+    for line in (text or "").splitlines():
+        line = line.lstrip("\ufeff").replace("\u200b", "")
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#") or stripped.startswith(">"):
+            continue
+        kept.append(line.rstrip())
+    return "\n".join(kept)
+
+
 def _read(path: Path, *, max_chars: int) -> str:
     try:
-        text = path.read_text(encoding="utf-8").strip()
+        text = _strip_md(path.read_text(encoding="utf-8-sig")).strip()
     except OSError:
         return ""
     if len(text) > max_chars:

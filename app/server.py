@@ -440,6 +440,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json({
             **pipe.session.stats(),
             "mood": pipe.session.current_mood().get("mood", "calm"),
+            **_age_of(pipe),
             "provider": getattr(pipe.llm, "provider", pipe.settings.llm_provider),
             "model": getattr(pipe.llm, "model", pipe.settings.model),
             "tts_ok": pipe.tts.health(timeout=1.5),
@@ -495,6 +496,21 @@ class Handler(BaseHTTPRequestHandler):
             "first_audio_s": round(first_audio or 0.0, 2),
             "notices": [n for n in notices if n],
         })
+
+
+def _age_of(pipe) -> dict:
+    """给 /api/state 用的年龄信息（时间轮现算，不写死）。"""
+    try:
+        from .llm import lifecycle
+
+        life = lifecycle.Life.from_dict(getattr(pipe.persona, "life", None))
+        if life is None:
+            return {}
+        snap = life.snapshot()
+        return {"age": snap["age"], "birthday": snap["birthday_label"],
+                "is_birthday": snap["is_birthday"], "days_to_birthday": snap["days_to_birthday"]}
+    except Exception:  # noqa: BLE001
+        return {}
 
 
 def main(argv=None) -> int:
