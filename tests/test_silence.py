@@ -44,11 +44,22 @@ class TestSqueezePauses(unittest.TestCase):
         # 300ms 有声 + 800ms 静音 + 300ms 有声
         wav = make_wav([(300, 1.0), (800, 0), (300, 1.0)])
         before = pause_stats(wav)
-        out = squeeze_pauses(wav)
+        out = squeeze_pauses(wav, max_gap_ms=120)
         after = pause_stats(out)
         self.assertLess(after["duration"], before["duration"])
         self.assertGreater(after["duration"], 0.5)  # 别把有声段也切了
         self.assertEqual(after["long_gaps"], 0)
+
+    def test_default_keeps_180ms_gap(self):
+        # 默认档 180ms：800ms 的间隙应缩到 180ms 左右（缩掉约 0.6s）
+        wav = make_wav([(300, 1.0), (800, 0), (300, 1.0)])
+        before = pause_stats(wav)
+        out = squeeze_pauses(wav)  # 默认 max_gap_ms=180
+        after = pause_stats(out)
+        self.assertLess(after["duration"], before["duration"] - 0.5)
+        self.assertLess(after["duration"], before["duration"])
+        # 保留下来的 180ms 仍会被算作"长停顿"，所以这里只要求不增加
+        self.assertLessEqual(after["long_gaps"], before["long_gaps"])
 
     def test_short_gap_untouched(self):
         wav = make_wav([(300, 1.0), (80, 0), (300, 1.0)])

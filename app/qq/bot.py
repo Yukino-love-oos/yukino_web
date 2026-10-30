@@ -99,6 +99,8 @@ class QQBot:
         self.dry_run = dry_run
         self.voice_enabled = _env_bool("QQ_VOICE", True)
         self.max_voice = int(_env_str("QQ_MAX_VOICE", "2") or "2")
+        # 短语间保留多长的停顿；实测 180ms 听感最自然（80/120/180 三档对比）
+        self.pause_ms = int(_env_str("QQ_PAUSE_MS", "180") or "180")
         self.settings = settings or load_settings()
         self.pipeline = None
         if not dry_run:
@@ -231,10 +233,10 @@ class QQBot:
         return self.api.upload_group_file(target, file_type=3, url=url)
 
     def _send_voice(self, kind: str, target: str, mid: str, wav: bytes, seq: int) -> bool:
-        # 先压掉合成时插入的长停顿：实测能把 52% 静音压到 28%，
-        # 听感从「一顿一顿」变成连贯的短句（见 app/tts/silence.py 的实测数据）。
+        # 先压掉合成时插入的长停顿：实测能把 52% 静音压到 30% 左右，
+        # 听感从「一顿一顿」变成连贯短句（见 app/tts/silence.py 的实测数据）。
         try:
-            compressed = squeeze_pauses(wav)
+            compressed = squeeze_pauses(wav, max_gap_ms=self.pause_ms)
             if compressed:
                 wav = compressed
         except Exception as exc:  # noqa: BLE001

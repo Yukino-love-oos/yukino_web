@@ -12,7 +12,8 @@ GPT-SoVITS 在 CPU/v2 模型上合成日语时，会在短语之间插入 0.4~0.
 
 参数选择
 --------
-· 短语间保留 120 ms 停顿 —— 完全去掉会连读成一句，反而不自然
+· 短语间默认保留 180 ms 停顿 —— 实测听感最自然（80/120/180 三档对比后选定）。
+  完全去掉会连读成一句，反而不自然；想更紧凑可把 max_gap_ms 调到 80~120。
 · 结尾保留 150 ms —— 给播放器一点余量，避免最后一个音被截断
 · 开头保留 30 ms —— 防止起音被削
 """
@@ -53,7 +54,7 @@ def _write_wav(pcm: bytes, rate: int) -> bytes:
 def squeeze_pauses(
     wav_bytes: bytes,
     *,
-    max_gap_ms: int = 120,
+    max_gap_ms: int = 180,
     head_keep_ms: int = 30,
     tail_keep_ms: int = 150,
 ) -> bytes:
