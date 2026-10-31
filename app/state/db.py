@@ -46,6 +46,9 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
+    # 同一份库会被两个进程同时写（官方机器人 + NapCat 后端各一个进程），
+    # WAL 允许多读单写，busy_timeout 负责让写冲突等一会儿而不是直接报错。
+    conn.execute("PRAGMA busy_timeout=15000")
     return conn
 
 
