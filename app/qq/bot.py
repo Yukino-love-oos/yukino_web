@@ -50,7 +50,7 @@ from ..pipeline import build_pipeline
 from ..state import expression
 from ..tts.cache import merge_wav
 from ..tts.silence import squeeze_pauses
-from . import onebot, silk, transport
+from . import silk
 from .api import INTENT_GROUP_AND_C2C_EVENT, QQApi, QQBotError
 from .gateway import QQGateway
 
@@ -93,24 +93,16 @@ def _env_str(name: str, default: str = "") -> str:
 
 class QQBot:
     def __init__(self, settings=None, *, dry_run: bool = False):
-        # 后端：official=官方机器人（合规，被动回复）| onebot=NapCat 个人号
-        self.backend = (_env_str("QQ_BACKEND", "official") or "official").strip().lower()
         self.app_id = _env_str("QQ_APP_ID")
         self.app_secret = _env_str("QQ_APP_SECRET")
-        self.api = None
-        self.onebot_client = None
-        self.transport = None
-
-        if self.backend != "onebot":
-            if not self.app_id or not self.app_secret:
-                raise SystemExit(
-                    "缺少 QQ_APP_ID / QQ_APP_SECRET。\n"
-                    "在 .env 里加上：\n"
-                    "  QQ_APP_ID=你的AppID\n"
-                    "  QQ_APP_SECRET=你的AppSecret\n"
-                    "（若走 NapCat 个人号，请设 QQ_BACKEND=onebot）"
-                )
-            self.api = QQApi(self.app_id, self.app_secret)
+        if not self.app_id or not self.app_secret:
+            raise SystemExit(
+                "缺少 QQ_APP_ID / QQ_APP_SECRET。\n"
+                "在 .env 里加上：\n"
+                "  QQ_APP_ID=你的AppID\n"
+                "  QQ_APP_SECRET=你的AppSecret"
+            )
+        self.api = QQApi(self.app_id, self.app_secret)
         self.dry_run = dry_run
         self.voice_enabled = _env_bool("QQ_VOICE", True)
         self.max_voice = int(_env_str("QQ_MAX_VOICE", "2") or "2")
@@ -123,21 +115,6 @@ class QQBot:
         self.sticker_enabled = _env_bool("QQ_STICKER", True)
         # 输出模式：random（按心情掷骰）| voice（总是语音）| text（总是文字）
         self.output_mode = (_env_str("QQ_OUTPUT_MODE", "random") or "random").strip().lower()
-
-        if self.backend == "onebot":
-            self.onebot_client = onebot.OneBotClient(
-                _env_str("ONEBOT_HTTP", "http://127.0.0.1:3000"),
-                token=_env_str("ONEBOT_TOKEN", ""),
-            )
-            self.transport = transport.OneBotTransport(self.onebot_client)
-            log.info("后端 = NapCat / OneBot（个人号）")
-        else:
-            self.transport = transport.OfficialTransport(
-                self.api,
-                media_base=_env_str("QQ_MEDIA_BASE", ""),
-                media_token=_env_str("YUKINO_TOKEN", ""),
-            )
-            log.info("后端 = QQ 官方机器人")
         self.settings = settings or load_settings()
         self.pipeline = None
         if not dry_run:
@@ -213,7 +190,11 @@ class QQBot:
     def _send_text(self, kind: str, target: str, mid: str, text: str, seq: int = 1) -> None:
         if not text.strip():
             return
-        self.transport.send_text(kind, target, mid, text, seq=seq)
+        if kind == "c2c":
+            self.api.send_c2c_text(target, text, mid, msg_seq=seq)
+        else:
+            self.api.send_group_text(target, text, mid, msg_seq=seq)
+        log.info("已回文字（%s 字, seq=%s）", len(text), seq)
 
     def _split_reply(self, text: str) -> list[str]:
         """把一段回复拆成 2~3 条短消息，模仿真人分条发。
@@ -249,14 +230,35 @@ class QQBot:
         return [p if p[-1] in "。！？!?…" else p + "。" for p in out]
 
     def _send_sticker(self, kind: str, target: str, mid: str, name: str, seq: int) -> bool:
-        """发一张表情包（官方通道走 file_type=1，NapCat 走 image 段）。"""
+        """发一张表情包（图片走 file_type=1，和语音共用 msg_type=7）。"""
         path = STICKER_DIR / ("%s.png" % name)
         try:
             data = path.read_bytes()
         except OSError:
             log.warning("表情包文件不存在：%s", path.name)
             return False
-        return self.transport.send_image(kind, target, mid, data, seq=seq)
+        try:
+            if kind == "c2c":
+                up = self.api.upload_c2c_file(
+                    target, file_type=1, file_data=data, file_name=path.name
+                )
+            else:
+                up = self.api.upload_group_file(
+                    target, file_type=1, file_data=data, file_name=path.name
+                )
+            info = (up or {}).get("file_info")
+            if not info:
+                log.warning("上传表情包没拿到 file_info：%s", up)
+                return False
+            if kind == "c2c":
+                self.api.send_c2c_media(target, info, mid, msg_seq=seq)
+            else:
+                self.api.send_group_media(target, info, mid, msg_seq=seq)
+            log.info("表情包已发：%s", name)
+            return True
+        except QQBotError as exc:
+            log.warning("发表情包失败：%s", exc)
+            return False
 
     def _publish_silk(self, data: bytes) -> str | None:
         """把 SILK 落到 web 服务的 data/qq_media 下，返回公网 URL。
@@ -309,7 +311,8 @@ class QQBot:
         return self.api.upload_group_file(target, file_type=3, url=url)
 
     def _send_voice(self, kind: str, target: str, mid: str, wav: bytes, seq: int) -> bool:
-        # 先压掉合成时插入的长停顿（52% 静音 -> 30% 左右，见 app/tts/silence.py）
+        # 先压掉合成时插入的长停顿：实测能把 52% 静音压到 30% 左右，
+        # 听感从「一顿一顿」变成连贯短句（见 app/tts/silence.py 的实测数据）。
         try:
             compressed = squeeze_pauses(wav, max_gap_ms=self.pause_ms)
             if compressed:
@@ -319,8 +322,22 @@ class QQBot:
         data = silk.encode_wav_to_silk(wav)
         if not data:
             return False
-        return self.transport.send_silk(kind, target, mid, data, seq=seq)
+        try:
+            up = self._upload_voice(kind, target, data)
+            info = (up or {}).get("file_info")
+            if not info:
+                log.warning("上传语音没拿到 file_info：%s", up)
+                return False
+            if kind == "c2c":
+                self.api.send_c2c_voice(target, info, mid, msg_seq=seq)
+            else:
+                self.api.send_group_voice(target, info, mid, msg_seq=seq)
+            return True
+        except QQBotError as exc:
+            log.warning("发语音失败（可能上限/格式问题）：%s", exc)
+            return False
 
+    # ---------------- 单条消息处理 ----------------
     def _synth_full(self, turn) -> bytes | None:
         """把这一轮所有台词合成成**一整段**音频。
 
@@ -421,70 +438,23 @@ class QQBot:
         log.info("本轮完成：模式=%s，用时 %.1fs", decision["mode"], time.time() - t0)
 
     # ---------------- 入口 ----------------
-    def on_onebot_message(self, ev: dict) -> None:
-        """NapCat 事件入口（和官方网关事件走同一套队列）。"""
-        mid = str(ev.get("message_id") or "")
-        text = (ev.get("text") or "").strip()
-        kind = ev.get("kind") or "c2c"
-        target = str(ev.get("target") or "")
-        if not text or not target:
-            return
-        if not self._first_time(mid):
-            log.debug("重复事件，忽略：%s", mid)
-            return
-        log.info("[%s] 收到：%s", kind, text[:80])
-        try:
-            self._queue.put_nowait((kind, target, mid, text))
-        except queue.Full:
-            log.warning("队列已满，丢弃消息 %s", mid)
-
     def run(self) -> None:
         if self.dry_run:
-            log.info("dry-run：验证后端连通性…")
-            if self.backend == "onebot":
-                info = self.onebot_client.get_login_info()
-                log.info("NapCat 登录账号：%s (%s)", info.get("nickname"), info.get("user_id"))
-                from .onebot import OneBotRunner
-                from .gateway import WebSocket
-
-                runner = OneBotRunner(self.onebot_client, _env_str("ONEBOT_WS", "ws://127.0.0.1:3001"))
-                ws = WebSocket(runner._url(), timeout=30)
-                ws.connect()
-                log.info("NapCat 事件流握手成功")
-                ws.close()
-                log.info("dry-run 通过：NapCat HTTP + WS 都通。")
-            else:
-                token = self.api.access_token()
-                log.info("access_token 前 12 位：%s…", token[:12])
-                url = self.api.gateway_url()
-                log.info("网关地址：%s", url)
-                gw = QQGateway(self.api, intents=INTENT_GROUP_AND_C2C_EVENT, on_event=lambda t, d: None)
-                gw.connect()
-                log.info("网关 WebSocket 握手成功")
-                gw.close()
-                log.info("dry-run 通过：凭据有效、网关可达。")
+            log.info("dry-run：验证凭据与网关…")
+            token = self.api.access_token()
+            log.info("access_token 前 12 位：%s…", token[:12])
+            url = self.api.gateway_url()
+            log.info("网关地址：%s", url)
+            gw = QQGateway(self.api, intents=INTENT_GROUP_AND_C2C_EVENT, on_event=lambda t, d: None)
+            gw.connect()
+            log.info("网关 WebSocket 握手成功")
+            gw.close()
+            log.info("dry-run 通过：凭据有效、网关可达。")
             return
 
         self.start_worker()
-
-        if self.backend == "onebot":
-            from .onebot import OneBotRunner
-
-            runner = OneBotRunner(
-                self.onebot_client,
-                _env_str("ONEBOT_WS", "ws://127.0.0.1:3001"),
-                token=_env_str("ONEBOT_TOKEN", ""),
-                on_message=self.on_onebot_message,
-                on_log=lambda m: log.info("%s", m),
-            )
-            log.info("启动 NapCat 事件监听（HTTP=%s WS=%s）",
-                     _env_str("ONEBOT_HTTP", "http://127.0.0.1:3000"),
-                     _env_str("ONEBOT_WS", "ws://127.0.0.1:3001"))
-            runner.run_forever()
-            return
-
         gw = QQGateway(self.api, intents=INTENT_GROUP_AND_C2C_EVENT, on_event=self.on_event)
-        log.info("启动 QQ 官方长连接（intents=%s）", INTENT_GROUP_AND_C2C_EVENT)
+        log.info("启动 QQ 长连接（intents=%s）", INTENT_GROUP_AND_C2C_EVENT)
         gw.run_forever()
 
 
