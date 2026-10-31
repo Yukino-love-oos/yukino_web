@@ -119,6 +119,10 @@ class Settings:
 
     # ---- 应用 ----
     persona_path: Path = ROOT / "persona/yukino.json"
+    # 用户档案：她「知道」对面是谁（手写设定 + 记忆写回自动追加）
+    user_profile_path: Path = ROOT / "persona/user_profile.json"
+    # 好感度锁定值：设了就一直保持这个值（None = 正常浮动）
+    affinity_lock: int | None = None
     db_path: Path = ROOT / "data/yukino.db"
     tts_cache_dir: Path = ROOT / "data/tts_cache"
     log_level: str = "INFO"
@@ -216,6 +220,10 @@ def load_settings(dotenv: Path | None = None) -> Settings:
         gsv_voice_weak=get("GSV_VOICE_WEAK", "SoVITS_weights/Yukino_Weak_01.pth"),
         persona_path=_resolve_persona(
             gpath("YUKINO_PERSONA", ROOT / "persona/yukino.json")
+        ),
+        user_profile_path=gpath("YUKINO_USER_PROFILE", ROOT / "persona/user_profile.json"),
+        affinity_lock=(
+            int(get("AFFINITY_LOCK")) if (get("AFFINITY_LOCK", "") or "").strip() else None
         ),
         db_path=gpath("DB_PATH", ROOT / "data/yukino.db"),
         tts_cache_dir=gpath("TTS_CACHE_DIR", ROOT / "data/tts_cache"),

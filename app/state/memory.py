@@ -15,6 +15,8 @@ import datetime as _dt
 import re
 import sqlite3
 
+from . import db as dbtools
+from . import ebbinghaus
 from .session import normalize
 
 _WORD = re.compile(r"[\w\u3040-\u30ff\u4e00-\u9fff]+")
@@ -44,8 +46,11 @@ def add(conn: sqlite3.Connection, kind: str, text: str) -> int:
     text = (text or "").strip()
     if not text:
         return 0
+    stability = ebbinghaus.initial_stability(kind)
     cur = conn.execute(
-        "INSERT INTO memory(ts, kind, text) VALUES(?,?,?)", (_now(), kind, text)
+        "INSERT INTO memory(ts, kind, text, layer, stability, last_review, review_count) "
+        "VALUES(?,?,?,?,?,?,?)",
+        (_now(), kind, text, "short", stability, None, 0),
     )
     conn.commit()
     return int(cur.lastrowid)
@@ -85,25 +90,53 @@ def _freshness(ts: str, *, now: _dt.datetime | None = None) -> float:
     return 0.5 ** (age / FRESHNESS_HALF_LIFE_DAYS)
 
 
-def recall(conn: sqlite3.Connection, query: str, k: int = 3, *,
-           now: _dt.datetime | None = None) -> list[dict]:
-    """按「关键词相关度 × 新鲜度 × 重要度」召回记忆。
+def _reinforce(conn: sqlite3.Connection, ids: list[int], *, now: _dt.datetime | None = None) -> None:
+    """被想起一次 = 复习一次：稳定度提升，够次数就升格为长期记忆。"""
+    if not ids:
+        return
+    now_s = (now or _dt.datetime.now()).isoformat(timespec="seconds")
+    for mid in ids:
+        row = conn.execute(
+            "SELECT stability, review_count FROM memory WHERE id = ?", (mid,)
+        ).fetchone()
+        if not row:
+            continue
+        new = ebbinghaus.after_review(row["stability"], row["review_count"])
+        conn.execute(
+            "UPDATE memory SET stability = ?, review_count = ?, layer = ?, last_review = ? WHERE id = ?",
+            (new["stability"], new["review_count"], new["layer"], now_s, mid),
+        )
+    conn.commit()
 
-    原来只按关键词重叠度排，问题有两个：
-      · 三年前的一句闲话和昨天说的偏好权重一样
-      · 「她讨厌下雨」这种事实和「今天聊了天气」这种流水账同权
-    加入新鲜度（半衰期 30 天）和类型重要度后，召回顺序明显更像人。
+
+def recall(conn: sqlite3.Connection, query: str, k: int = 3, *,
+           now: _dt.datetime | None = None, reinforce: bool = True) -> list[dict]:
+    """按「相关度 × 保持率 × 重要度 × 记忆层」召回，并对命中的记忆做一次复习。
+
+    保持率来自艾宾浩斯曲线 R = exp(-t/S)：
+      · 常被想起的记忆 S 越来越大 → 忘得越来越慢
+      · 长期不用的记忆 R 掉到 0.15 以下就不再注入（等于想不起来，但没删库）
     """
     q = _tokens(query)
     if not q:
         return []
-    rows = conn.execute("SELECT id, ts, kind, text FROM memory ORDER BY id DESC LIMIT 200").fetchall()
+    try:
+        dbtools.ensure_memory_columns(conn)
+    except Exception:  # noqa: BLE001
+        pass
+
+    rows = conn.execute(
+        "SELECT id, ts, kind, text, layer, stability, review_count FROM memory "
+        "ORDER BY id DESC LIMIT 400"
+    ).fetchall()
+    now_dt = now or _dt.datetime.now()
     scored: list[tuple[float, dict]] = []
     seen: set[str] = set()
+
     for r in rows:
         text = r["text"] or ""
         key = normalize(text)[:60]
-        if key in seen:          # 近似重复的记忆只留分数最高那条
+        if key in seen:
             continue
         toks = _tokens(text)
         if not toks:
@@ -111,39 +144,61 @@ def recall(conn: sqlite3.Connection, query: str, k: int = 3, *,
         inter = len(q & toks)
         if inter == 0:
             continue
-        overlap = inter / (len(q) ** 0.5 * len(toks) ** 0.5)
-        fresh = _freshness(r["ts"], now=now)
+
+        overlap = inter / ((len(q) ** 0.5) * (len(toks) ** 0.5))
+        age = ebbinghaus.days_since(r["ts"], now=now_dt)
+        stab = r["stability"] if r["stability"] is not None else ebbinghaus.DEFAULT_STABILITY
+        if ebbinghaus.is_dormant(age, stab):
+            continue                        # 已淡忘，不注入
+        keep = ebbinghaus.retention(age, stab)
         importance = _KIND_IMPORTANCE.get((r["kind"] or "").lower(), _DEFAULT_IMPORTANCE)
-        score = overlap * (0.55 + 0.45 * fresh) * (0.60 + 0.40 * (importance / 10.0))
+        layer_w = ebbinghaus.LAYER_WEIGHT.get((r["layer"] or "short"), 1.0)
+
+        score = overlap * (0.35 + 0.65 * keep) * (0.60 + 0.40 * (importance / 10.0)) * layer_w
         seen.add(key)
         item = dict(r)
         item["_score"] = round(score, 4)
-        item["_fresh"] = round(fresh, 3)
+        item["_retention"] = round(keep, 3)
+        item["_importance"] = importance
         scored.append((score, item))
+
     scored.sort(key=lambda x: -x[0])
-    return [item for _, item in scored[:k]]
+    out = [item for _, item in scored[:k]]
+    if reinforce and out:
+        _reinforce(conn, [int(i["id"]) for i in out], now=now_dt)
+    return out
 
 
 def build_memory_block(memories: list[dict], *, max_chars: int = 800) -> str:
-    """把召回结果渲染成 system prompt 里的一段（带字数预算）。
+    """把召回结果渲染成 system prompt 里的一段（分层 + 字数预算）。
 
-    预算很重要：记忆条数不限的话，长对话后 system prompt 会被记忆撑爆，
-    token 成本和延迟都会涨。默认最多 800 字，超了就丢分数最低的。
+    分层渲染让模型知道「这是长期记住的事」还是「近期的事」：
+    长期事实可以笃定地说，近期事件要用「上次」这类措辞。
     """
     if not memories:
         return ""
-    lines: list[str] = []
+    long_lines: list[str] = []
+    short_lines: list[str] = []
     used = 0
-    for m in memories:
-        text = (m.get("text") or "").strip()
+    for mem in memories:
+        text = (mem.get("text") or "").strip()
         if not text:
             continue
-        line = f"  - {text}"
-        if used + len(line) > max_chars and lines:
+        line = "  - " + text
+        if used + len(line) > max_chars and (long_lines or short_lines):
             break
-        lines.append(line)
+        if (mem.get("layer") or "short") == "long":
+            long_lines.append(line)
+        else:
+            short_lines.append(line)
         used += len(line)
-    return "\n".join(lines)
+
+    parts: list[str] = []
+    if long_lines:
+        parts.append("（长期记住的事）\n" + "\n".join(long_lines))
+    if short_lines:
+        parts.append("（近期的事）\n" + "\n".join(short_lines))
+    return "\n".join(parts)
 
 
 # ---------------------------------------------------------------- 增量写回

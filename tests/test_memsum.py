@@ -56,6 +56,10 @@ def _conn() -> sqlite3.Connection:
         """
     )
     conn.execute("CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)")
+    # 走一次真实迁移，保证测试表结构与生产一致（多层记忆新增了 layer/stability 等列）
+    from app.state import db as dbtools
+
+    dbtools.ensure_memory_columns(conn)
     return conn
 
 

@@ -84,6 +84,7 @@ def render_system_prompt(
     extra_rules: str = "",
     age_hint: str = "",
     life_block: str = "",
+    user_profile: str = "",
 ) -> str:
     """渲染 system prompt。所有可变部分都由外部注入，人格卡里不写死数值。
 
@@ -106,6 +107,7 @@ def render_system_prompt(
         extra_rules=rules,
         age_hint=age_hint or "",
         life_block=(life_block or "").strip(),
+        user_profile=(user_profile or "").strip() or "（还不了解对方）",
         affinity=affinity,
         band_label=band.get("label", ""),
         band_tone=band.get("tone", ""),

@@ -1,7 +1,10 @@
-# Yukino TTS watchdog: 每 2 分钟检查一次 9881 端口，挂了就拉起来。
+# Yukino TTS watchdog: check port 9881 every 2 minutes and restart if down.
 #
-# 为什么要它：CPU 推理在长文本上会吃满内存，TTS 进程偶尔被系统杀掉，
-# 表现是「机器人还在回文字，但语音一直没反应」。没有看门狗就得手动重启。
+# NOTE: this file is intentionally pure ASCII.
+# PowerShell 5.1 on a Chinese Windows parses .ps1 as ANSI unless the file has a
+# UTF-8 BOM. Chinese comments here break parsing and the scheduled task then
+# fails silently -- which is exactly what happened once (watchdog.log stayed
+# empty while TTS was down for two hours).
 $ErrorActionPreference = 'Continue'
 $log = 'C:\upload\watchdog.log'
 $ts = (Get-Date).ToString('MM-dd HH:mm:ss')
@@ -9,13 +12,12 @@ $ts = (Get-Date).ToString('MM-dd HH:mm:ss')
 $listening = (Get-NetTCPConnection -State Listen -LocalPort 9881 -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0
 
 if ($listening) {
-    # 正常时不刷日志，避免文件膨胀
     exit 0
 }
 
 Add-Content -Path $log -Value ("[$ts] TTS 9881 not listening -> restarting")
 
-# 先把可能存在的僵尸 python 清掉（只清 api_v2，不动 app.server / app.qq）
+# Kill stale api_v2 processes only (never touch app.server / app.qq)
 Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue | ForEach-Object {
     if ($_.CommandLine -and $_.CommandLine -match 'api_v2') {
         try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch { }

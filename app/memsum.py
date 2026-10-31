@@ -33,7 +33,7 @@ import logging
 import sys
 
 from .config import load_settings
-from .state import db, memory
+from .state import db, memory, userprofile
 
 log = logging.getLogger("yukino.memsum")
 
@@ -98,6 +98,15 @@ def run(*, min_turns: int = 6, batch: int = 30, force: bool = False,
         cursor = int(chunk[-1]["id"])
         memory.set_last_summarized_id(conn, cursor)
         written_total += len(got)
+        # 顺手把「关于用户的事实/偏好」补进用户档案，聊得越久档案越完整
+        try:
+            facts = [w["text"] for w in got if w.get("kind") in ("fact", "preference")]
+            if facts:
+                added = userprofile.append_facts(settings.user_profile_path, facts)
+                for a in added:
+                    log.info("  → 档案 + %s", a)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("补充用户档案失败：%r", exc)
         if status == "nothing":
             log.info("第 %s 批（%s 轮）：模型判断没有值得记的信息，游标推进到 id=%s",
                      bi + 1, len(chunk), cursor)

@@ -49,6 +49,33 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     return conn
 
 
+# 多层记忆 / 艾宾浩斯曲线需要的列（老库升级用，纯 ALTER 幂等）
+_MEMORY_MIGRATIONS = (
+    ("layer", "TEXT NOT NULL DEFAULT 'short'"),
+    ("stability", "REAL NOT NULL DEFAULT 14.0"),
+    ("last_review", "TEXT"),
+    ("review_count", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+
+def ensure_memory_columns(conn: sqlite3.Connection) -> None:
+    """给记忆表补上多列。已有的列会被跳过，所以可以每次启动都调。"""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(memory)").fetchall()}
+    for name, decl in _MEMORY_MIGRATIONS:
+        if name in cols:
+            continue
+        try:
+            conn.execute("ALTER TABLE memory ADD COLUMN %s %s" % (name, decl))
+        except sqlite3.OperationalError:
+            pass
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_layer ON memory(layer)")
+    except sqlite3.OperationalError:
+        pass
+    conn.commit()
+
+
 def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    ensure_memory_columns(conn)
     conn.commit()

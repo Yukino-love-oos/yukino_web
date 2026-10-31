@@ -43,10 +43,13 @@ def _today() -> str:
 class Session:
     """一个会话 = 一份持久化的好感度 + 一轮轮的对话记录。"""
 
-    def __init__(self, conn: sqlite3.Connection, persona, user_id: str = "default") -> None:
+    def __init__(self, conn: sqlite3.Connection, persona, user_id: str = "default",
+                 affinity_lock: int | None = None) -> None:
         self.conn = conn
         self.persona = persona
         self.user_id = user_id
+        # 锁定时好感度不随对话浮动（用于「对我满好感度」这类设定）
+        self.affinity_lock = affinity_lock
 
     # ---------------- 键值状态 ----------------
     def get(self, key: str, default: str = "") -> str:
@@ -93,11 +96,16 @@ class Session:
     # ---------------- 好感度 ----------------
     @property
     def affinity(self) -> int:
+        if self.affinity_lock is not None:
+            return int(self.affinity_lock)
         return self.get_int("affinity", 0)
 
     @affinity.setter
     def affinity(self, value: int) -> None:
         lo, hi = self.persona.affinity.get("range", [-100, 100])
+        # 锁定状态下不落库，避免数据库与展示值不一致
+        if self.affinity_lock is not None:
+            return
         self.set("affinity", max(lo, min(hi, int(value))))
 
     @property

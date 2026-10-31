@@ -19,7 +19,7 @@ from .config import Settings
 from .llm import lifecycle, rules
 from .llm.persona import Persona, render_system_prompt
 from .llm.protocol import ProtocolParser, Turn, looks_japanese
-from .state import memory
+from .state import memory, userprofile
 from .state.session import Session
 from .tts.cache import AudioCache, fix_wav_header
 from .tts.gsv import GsvClient, GsvError
@@ -108,11 +108,15 @@ class Pipeline:
         # 三层人格：L1 = 人格卡；L2/L3 = persona/rules/{owner,self}.md
         layers = rules.load_layers(self.settings.persona_path)
         snap, age_hint, life_block = self._lifeview()
+        profile_block = userprofile.render_block(
+            userprofile.load(self.settings.user_profile_path)
+        )
         sys_prompt = render_system_prompt(
             self.persona,
             affinity=self.session.affinity,
             age_hint=age_hint,
             life_block=life_block,
+            user_profile=profile_block,
             memory_block=memory.build_memory_block(hits, max_chars=self.settings.memory_max_chars),
             # 心情带衰减：3 小时没聊，愤怒/害羞会自己回落，不会一直挂着脸
             mood_hint=self.session.mood_hint(),
@@ -272,7 +276,7 @@ def build_pipeline(settings: Settings) -> Pipeline:
     persona = load_persona(settings.persona_path)
     conn = db.connect(settings.db_path)
     db.init_schema(conn)
-    session = Session(conn, persona)
+    session = Session(conn, persona, affinity_lock=getattr(settings, "affinity_lock", None))
     llm = build_client(settings)
     tts = from_settings(settings)
     cache = AudioCache(settings.tts_cache_dir, enabled=settings.use_tts_cache)

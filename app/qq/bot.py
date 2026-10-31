@@ -47,6 +47,8 @@ from urllib.parse import quote
 
 from ..config import load_settings
 from ..pipeline import build_pipeline
+from ..state import expression
+from ..tts.cache import merge_wav
 from ..tts.silence import squeeze_pauses
 from . import silk
 from .api import INTENT_GROUP_AND_C2C_EVENT, QQApi, QQBotError
@@ -111,6 +113,8 @@ class QQBot:
         self.text_gap = float(_env_str("QQ_TEXT_GAP", "0.6") or "0.6")
         # 表情包开关
         self.sticker_enabled = _env_bool("QQ_STICKER", True)
+        # 输出模式：random（按心情掷骰）| voice（总是语音）| text（总是文字）
+        self.output_mode = (_env_str("QQ_OUTPUT_MODE", "random") or "random").strip().lower()
         self.settings = settings or load_settings()
         self.pipeline = None
         if not dry_run:
@@ -334,6 +338,44 @@ class QQBot:
             return False
 
     # ---------------- 单条消息处理 ----------------
+    def _synth_full(self, turn) -> bytes | None:
+        """把这一轮所有台词合成成**一整段**音频。
+
+        为什么不分句发：按句拆成好几条语音，听感是一顿一顿的
+        （之前实测过，静音占比 50%+）。整段连着说才像人在说话。
+        """
+        sentences = [x for x in getattr(turn, "sentences", []) if x and x.strip()]
+        if not sentences:
+            return None
+        chunks: list[bytes] = []
+        for sentence in sentences:
+            try:
+                wav = self.pipeline.speak(sentence)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("合成失败：%r", exc)
+                continue
+            if wav:
+                chunks.append(wav)
+        if not chunks:
+            return None
+        if len(chunks) == 1:
+            return chunks[0]
+        return merge_wav(chunks)
+
+    def _send_full_voice(self, kind: str, target: str, mid: str, turn, seq: int) -> bool:
+        if not self.voice_enabled:
+            return False
+        if not silk.available_backends():
+            log.info("没有 SILK 编码器，跳过语音（改发文字）")
+            return False
+        wav = self._synth_full(turn)
+        if not wav:
+            return False
+        ok = self._send_voice(kind, target, mid, wav, seq)
+        if ok:
+            log.info("整段语音已发（%.1f 秒）", len(wav) / 32000.0 / 2.0)
+        return ok
+
     def _handle(self, kind: str, target: str, mid: str, content: str) -> None:
         if self.pipeline is None:
             self._send_text(kind, target, mid, "（服务未就绪）")
@@ -341,7 +383,7 @@ class QQBot:
 
         t0 = time.time()
 
-        # ---- 第一段：只出文字（跳过 TTS），尽快回 ----
+        # ---- 第一段：只出文字（跳过 TTS），先把内容拿到手 ----
         turn = None
         for ev in self.pipeline.respond(content, speak=False):
             if ev.get("type") == "done":
@@ -352,58 +394,48 @@ class QQBot:
             self._send_text(kind, target, mid, "……（有点说不出来）")
             return
 
+        # ---- 心情 → 输出模式（语音 or 文字，加权随机）----
+        try:
+            self.pipeline.session.set_mood(turn.expression)
+        except Exception:  # noqa: BLE001
+            pass
+        mood_state = self.pipeline.session.current_mood()
+        force = None if self.output_mode not in ("voice", "text") else self.output_mode
+        decision = expression.choose_mode(
+            mood_state, self.pipeline.session.affinity, force=force
+        )
+        log.info("输出模式 → %s（%s）", decision["mode"], decision["reason"])
+
         reply = (turn.zh or "").strip() or (turn.ja or "").strip()
+        sticker = (getattr(turn, "sticker", "") or "").strip()
         seq = 1
 
-        # ---- 第一段：文字，分条发送（模仿真人一句一句发）----
-        segments = self._split_reply(reply)
-        sent_any = False
-        for i, seg in enumerate(segments):
+        if decision["mode"] == "voice":
+            # 语音先发，**念完再输出文字**
+            if self._send_full_voice(kind, target, mid, turn, seq):
+                seq += 1
             try:
-                self._send_text(kind, target, mid, seg, seq=seq)
-                sent_any = True
+                self._send_text(kind, target, mid, reply, seq=seq)
                 seq += 1
             except QQBotError as exc:
                 log.warning("回文字失败：%s", exc)
-                break
-            if i < len(segments) - 1:
-                time.sleep(self.text_gap)
-        if not sent_any:
-            return
-        log.info("文字已回（%s 条），用时 %.1fs", len(segments), time.time() - t0)
-
-        # ---- 第二段：表情包（廉价、立刻能发，放在语音前面）----
-        sticker = (getattr(turn, "sticker", "") or "").strip()
-        if sticker and self.sticker_enabled:
-            if self._send_sticker(kind, target, mid, sticker, seq):
-                seq += 1
-
-        # ---- 第三段：补齐语音（尽力而为，失败不影响文字和表情）----
-        if not self.voice_enabled:
-            return
-        sentences = [s for s in getattr(turn, "sentences", []) if s and s.strip()]
-        if not sentences:
-            return
-        if not silk.available_backends():
-            log.info("没有 SILK 编码器，跳过语音（文字已送达）")
-            return
-        sent = 0
-        for sentence in sentences[: self.max_voice]:
+                return
+            if sticker and self.sticker_enabled:
+                if self._send_sticker(kind, target, mid, sticker, seq):
+                    seq += 1
+        else:
+            # 文字模式：一条消息发完，不做短句拆分
             try:
-                wav = self.pipeline.speak(sentence)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("合成失败：%r", exc)
-                break
-            if not wav:
-                continue
-            if self._send_voice(kind, target, mid, wav, seq):
-                sent += 1
+                self._send_text(kind, target, mid, reply, seq=seq)
                 seq += 1
-                log.info("语音已发（第 %s 条）", sent)
-            else:
-                break
-        log.info("本轮完成：%s 条文字 + %s 表情 + %s 条语音，总用时 %.1fs",
-                 len(segments), 1 if sticker else 0, sent, time.time() - t0)
+            except QQBotError as exc:
+                log.warning("回文字失败：%s", exc)
+                return
+            if sticker and self.sticker_enabled:
+                if self._send_sticker(kind, target, mid, sticker, seq):
+                    seq += 1
+
+        log.info("本轮完成：模式=%s，用时 %.1fs", decision["mode"], time.time() - t0)
 
     # ---------------- 入口 ----------------
     def run(self) -> None:

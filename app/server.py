@@ -217,18 +217,25 @@ document.getElementById('f').addEventListener('submit',async ev=>{
     if(d.error){ add('her','<span style="color:#e08">'+esc(d.error)+'</span>'); }
     else{
       const t=d.turn;
-      add('her',(t.act?'<div class="act">（'+esc(t.act)+'）</div>':'')+esc(t.ja||'')+
+      const bubble=(t.act?'<div class="act">（'+esc(t.act)+'）</div>':'')+esc(t.ja||'')+
                  (t.zh?'<div class="zh">'+esc(t.zh)+'</div>':'')+
                  '<div class="meta-line">好感度 '+(d.delta>0?'+':'')+d.delta+' → '+d.affinity+
-                 ' · 首响 '+d.first_audio_s.toFixed(2)+'s</div>');
-      // 表情包：模型偶尔会带 <sticker>，网页上直接显示对应图片
-      if(t.sticker){
-        add('her','<img src="/assets/'+esc(t.sticker)+'.png" alt="'+esc(t.sticker)+
-                   '" style="width:132px;height:132px;object-fit:cover;border-radius:14px;'+
-                   'margin-top:6px;display:block">');
+                 ' · 首响 '+d.first_audio_s.toFixed(2)+'s</div>';
+      const stickerHtml = t.sticker
+        ? '<img src="/assets/'+esc(t.sticker)+'.png" alt="'+esc(t.sticker)+
+          '" style="width:132px;height:132px;object-fit:cover;border-radius:14px;'+
+          'margin-top:6px;display:block">'
+        : '';
+      // 语音模式：先让她说完，再显示文字（符合「念完再输出」）
+      if(d.mode==='voice' && d.audios && d.audios.length){
+        const ph=add('her','<span style="color:#8b93a7">🔊 正在说…</span>');
+        await playAll(d.audios);
+        ph.remove();
+        add('her', bubble + stickerHtml);
+      }else{
+        add('her', bubble + stickerHtml);
       }
       for(const w of (d.notices||[])) add('her','<span style="color:#c9a66b">'+esc(w)+'</span>');
-      if(d.audios&&d.audios.length) playAll(d.audios);
     }
     await refresh(true);
   }catch(e){ thinking.remove(); add('her','<span style="color:#e08">请求失败: '+esc(e)+'</span>'); }
@@ -488,8 +495,32 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             pass
 
+        # 心情 → 输出模式（语音 / 文字），与 QQ 侧同一套规则
+        mode_info = {"mode": "text", "probability": 0.0, "reason": ""}
+        try:
+            from .state import expression as _expr
+            from .tts.cache import merge_wav as _merge
+
+            cfg = (os.environ.get("OUTPUT_MODE") or "").strip().lower()
+            force = cfg if cfg in ("voice", "text") else None
+            mode_info = _expr.choose_mode(
+                pipe.session.current_mood(), pipe.session.affinity, force=force
+            )
+            if mode_info["mode"] == "voice" and audios:
+                # 整段合成一条音频，不再按句拆（避免一顿一顿）
+                merged = _merge([base64.b64decode(a) for a in audios])
+                audios = [base64.b64encode(merged).decode("ascii")]
+            elif mode_info["mode"] == "text":
+                audios = []
+        except Exception as exc:  # noqa: BLE001
+            log.warning("输出模式判定失败，按文字处理：%r", exc)
+            mode_info = {"mode": "text", "probability": 0.0, "reason": "fallback"}
+            audios = []
+
         self._json({
             "turn": turn.to_dict(),
+            "mode": mode_info["mode"],
+            "mode_reason": mode_info.get("reason", ""),
             "delta": delta,
             "affinity": pipe.session.affinity,
             "audios": audios,
