@@ -202,6 +202,17 @@ async function refresh(scroll){
   }catch(e){ statusEl.textContent='无法连接: '+e; }
 }
 
+/* 她主动发来的消息：网页没有推送，轮询够了 */
+async function pollProactive(){
+  try{
+    const r=await fetch('/api/proactive',{cache:'no-store'});
+    const d=await r.json();
+    for(const m of (d.messages||[])){
+      add('her','<span style="color:#8b93a7;font-size:12px">\uff08\u5979\u4e3b\u52a8\u53d1\u6765\u7684\uff09</span><br>'+esc(m.text));
+    }
+  }catch(e){}
+}
+setInterval(pollProactive, 25000);
 document.getElementById('f').addEventListener('submit',async ev=>{
   ev.preventDefault();
   const text=q.value.trim(); if(!text) return;
@@ -308,6 +319,54 @@ def get_pipeline():
         _PIPELINE = build_pipeline(load_settings())
     return _PIPELINE
 
+_PROACTIVE = None
+
+
+class WebSender:
+    """网页端投递：写进 outbox(channel='web')，页面轮询取走。
+
+    网页不需要「主动消息配额」，所以链式 timer 在网页端是可以完整跑的。
+    """
+
+    def __init__(self, conn):
+        self.conn = conn
+
+    def send(self, text: str, timer: dict | None = None) -> dict:
+        from .proactive import add_outbox
+
+        add_outbox(self.conn, text, channel="web",
+                   timer_id=(timer or {}).get("id"))
+        return {"delivered": True, "channel": "web"}
+
+
+def get_proactive():
+    global _PROACTIVE
+    if _PROACTIVE is None:
+        from .proactive import Proactive
+
+        pipe = get_pipeline()
+        _PROACTIVE = Proactive(
+            pipe,
+            sender=WebSender(pipe.session.conn),
+            enabled=getattr(pipe.settings, "proactive", True),
+        )
+    return _PROACTIVE
+
+
+def _start_proactive_ticker() -> None:
+    """每 30 秒看一眼有没有到点的 timer（daemon，挂了不影响网页）。"""
+    import threading as _th
+
+    def loop():
+        while True:
+            time.sleep(30)
+            try:
+                get_proactive().tick()
+            except Exception:  # noqa: BLE001
+                log.warning("主动关心 tick 失败", exc_info=True)
+
+    _th.Thread(target=loop, name="proactive-ticker", daemon=True).start()
+
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "YukinoServer/2.1"
@@ -383,6 +442,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/state":
             self._state()
+            return
+        if path == "/api/proactive":
+            self._proactive_pending()
             return
         if path.startswith("/media/"):
             self._media(path[len("/media/"):])
@@ -495,6 +557,13 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             pass
 
+        # 主动关心：这一轮聊完之后，想想要不要过一会儿回访他，
+        # 同时保证链式 timer 一直在（纯规则计算，不额外调模型，不影响响应速度）
+        try:
+            get_proactive().on_turn_end(text, (turn.zh or "").strip())
+        except Exception as exc:  # noqa: BLE001
+            log.warning("主动关心调度失败：%r", exc)
+
         # 心情 → 输出模式（语音 / 文字），与 QQ 侧同一套规则
         mode_info = {"mode": "text", "probability": 0.0, "reason": ""}
         try:
@@ -527,6 +596,21 @@ class Handler(BaseHTTPRequestHandler):
             "first_audio_s": round(first_audio or 0.0, 2),
             "notices": [n for n in notices if n],
         })
+
+
+    def _proactive_pending(self):
+        """网页端取她主动发来的消息（取走即标记，避免重复显示）。"""
+        try:
+            from .proactive import consume_pending_topics, read_web_messages
+
+            pipe = get_pipeline()
+            rows = read_web_messages(pipe.session.conn)
+            if rows:
+                consume_pending_topics(pipe.session.conn, [r["id"] for r in rows])
+            self._json({"messages": [{"ts": r["ts"], "text": r["text"]} for r in rows]})
+        except Exception as exc:  # noqa: BLE001
+            log.warning("取主动消息失败：%r", exc)
+            self._json({"messages": []})
 
 
 def _age_of(pipe) -> dict:
@@ -582,6 +666,7 @@ def main(argv=None) -> int:
     print("=" * 60)
     print("  Ctrl+C 退出")
 
+    _start_proactive_ticker()
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     try:
         httpd.serve_forever()

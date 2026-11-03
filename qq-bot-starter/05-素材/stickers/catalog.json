@@ -1,0 +1,54 @@
+{
+  "_说明": "这是自定义表情包的示例 catalog（结构取自 dsh-dafeiyu-dot 自带 assets/stickers/catalog.json，version:1）。把它和图片一起放进插件的 assets/stickers/ 目录，图片文件名要和 file 字段一致。删掉 _说明 字段。",
+  "version": 1,
+  "stickers": [
+    {
+      "id": "nod",
+      "title": "点头",
+      "emotion": "calm",
+      "tags": ["同意", "好", "点头", "嗯", "calm"],
+      "file": "nod.png",
+      "mime": "image/png"
+    },
+    {
+      "id": "hmm",
+      "title": "沉思",
+      "emotion": "concerned",
+      "tags": ["思考", "沉默", "怀疑", "嗯？", "concerned"],
+      "file": "hmm.png",
+      "mime": "image/png"
+    },
+    {
+      "id": "smug",
+      "title": "得意",
+      "emotion": "playful",
+      "tags": ["得意", "赢了", "你看", "playful"],
+      "file": "smug.png",
+      "mime": "image/png"
+    },
+    {
+      "id": "tired",
+      "title": "困了",
+      "emotion": "sleepy",
+      "tags": ["困", "累", "晚安", "想睡", "sleepy"],
+      "file": "tired.png",
+      "mime": "image/png"
+    },
+    {
+      "id": "pout",
+      "title": "哼",
+      "emotion": "angry",
+      "tags": ["生气", "不满", "哼", "angry"],
+      "file": "pout.png",
+      "mime": "image/png"
+    },
+    {
+      "id": "pat",
+      "title": "摸摸头",
+      "emotion": "warm",
+      "tags": ["安慰", "摸摸", "抱抱", "暖", "warm"],
+      "file": "pat.png",
+      "mime": "image/png"
+    }
+  ]
+}

@@ -123,6 +123,10 @@ class Settings:
     user_profile_path: Path = ROOT / "persona/user_profile.json"
     # 好感度锁定值：设了就一直保持这个值（None = 正常浮动）
     affinity_lock: int | None = None
+    # 主动关心（链式 timer + 临时回访）总开关
+    proactive: bool = True
+    # QQ 官方机器人「主动消息」每用户每月配额（官方 4 条，超额 403）
+    proactive_qq_quota: int = 4
     db_path: Path = ROOT / "data/yukino.db"
     tts_cache_dir: Path = ROOT / "data/tts_cache"
     log_level: str = "INFO"
@@ -225,6 +229,8 @@ def load_settings(dotenv: Path | None = None) -> Settings:
         affinity_lock=(
             int(get("AFFINITY_LOCK")) if (get("AFFINITY_LOCK", "") or "").strip() else None
         ),
+        proactive=str(get("PROACTIVE", "1")).strip().lower() not in ("0", "false", "no"),
+        proactive_qq_quota=int(get("PROACTIVE_QQ_QUOTA", "4") or 4),
         db_path=gpath("DB_PATH", ROOT / "data/yukino.db"),
         tts_cache_dir=gpath("TTS_CACHE_DIR", ROOT / "data/tts_cache"),
         log_level=get("LOG_LEVEL", "INFO").upper(),

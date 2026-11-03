@@ -139,6 +139,23 @@ class QQApi:
         )
 
     # ---------------- 上传文件 / 发语音 ----------------
+    # ---------------- 主动消息（不带 msg_id） ----------------
+    # 官方限制：主动消息有月配额（单聊约 4 条/月/用户），超额会返回 403。
+    # 所以调用方必须自己记账，不能把它当成随时可用的通道。
+    def send_c2c_proactive(self, openid: str, content: str) -> dict:
+        return self._request(
+            "POST",
+            f"/v2/users/{openid}/messages",
+            {"content": content, "msg_type": 0},
+        )
+
+    def send_group_proactive(self, group_openid: str, content: str) -> dict:
+        return self._request(
+            "POST",
+            f"/v2/groups/{group_openid}/messages",
+            {"content": content, "msg_type": 0},
+        )
+
     def upload_c2c_file(
         self,
         openid: str,

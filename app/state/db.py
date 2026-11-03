@@ -36,6 +36,33 @@ CREATE TABLE IF NOT EXISTS memory (
     text TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_memory_kind ON memory(kind);
+
+-- 主动关心：链式 timer / 临时回访。一条 = 到点请模型重新判断一次
+CREATE TABLE IF NOT EXISTS timers (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind       TEXT    NOT NULL,
+    created_ts TEXT    NOT NULL,
+    due_ts     TEXT    NOT NULL,
+    status     TEXT    NOT NULL DEFAULT 'pending',
+    note       TEXT    NOT NULL DEFAULT '',
+    why        TEXT    NOT NULL DEFAULT '',
+    fired_ts   TEXT,
+    result     TEXT    NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_timers_due  ON timers(status, due_ts);
+CREATE INDEX IF NOT EXISTS idx_timers_kind ON timers(kind, status);
+
+-- 主动消息的收件箱：QQ 主动消息有配额，发不出去的先存这里，
+-- 下一轮对话时自然带出来，或者网页端展示
+CREATE TABLE IF NOT EXISTS proactive_outbox (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts        TEXT    NOT NULL,
+    text      TEXT    NOT NULL,
+    delivered INTEGER NOT NULL DEFAULT 0,
+    channel   TEXT    NOT NULL DEFAULT 'buffered',
+    timer_id  INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_outbox_delivered ON proactive_outbox(delivered);
 """
 
 

@@ -40,6 +40,7 @@ import re
 import sys
 import threading
 import time
+from datetime import datetime
 import traceback
 import uuid
 from pathlib import Path
@@ -91,6 +92,41 @@ def _env_str(name: str, default: str = "") -> str:
         return default
 
 
+class QQProactiveSender:
+    """QQ 主动消息投递。
+
+    官方对「主动消息」（不带 msg_id）有月配额，单聊约 4 条/月/用户。
+    所以这里做账本：超过配额就不发了，转成 outbox，等下次他说话时自然带出来。
+    """
+
+    def __init__(self, api, session, *, quota: int = 4):
+        self.api = api
+        self.session = session
+        self.quota = max(0, int(quota))
+
+    @staticmethod
+    def _month_key(now: datetime | None = None) -> str:
+        now = now or datetime.now()
+        return "proactive_qq_sent_%04d%02d" % (now.year, now.month)
+
+    def send(self, text: str, timer: dict | None = None) -> dict:
+        openid = (self.session.get("last_openid") or "").strip()
+        if not openid:
+            return {"delivered": False, "reason": "no_openid"}
+        key = self._month_key()
+        used = self.session.get_int(key, 0)
+        if used >= self.quota:
+            log.info("QQ 主动消息配额已用完（%s/%s），转为下次对话带出", used, self.quota)
+            return {"delivered": False, "reason": "quota"}
+        try:
+            self.api.send_c2c_proactive(openid, text)
+        except QQBotError as exc:
+            log.warning("QQ 主动消息发送失败（可能配额/权限）：%s", exc)
+            return {"delivered": False, "reason": "api"}
+        self.session.set(key, used + 1)
+        return {"delivered": True, "channel": "qq"}
+
+
 class QQBot:
     def __init__(self, settings=None, *, dry_run: bool = False):
         self.app_id = _env_str("QQ_APP_ID")
@@ -123,6 +159,20 @@ class QQBot:
         self._seen_lock = threading.Lock()
         self._queue: queue.Queue = queue.Queue(maxsize=32)
         self._worker: threading.Thread | None = None
+
+        # 主动关心：链式 timer + 临时回访
+        self.proactive = None
+        if self.pipeline is not None:
+            from ..proactive import Proactive
+
+            self.proactive = Proactive(
+                self.pipeline,
+                sender=QQProactiveSender(
+                    self.api, self.pipeline.session,
+                    quota=getattr(self.settings, "proactive_qq_quota", 4),
+                ),
+                enabled=getattr(self.settings, "proactive", True),
+            )
 
     # ---------------- 去重 ----------------
     def _first_time(self, mid: str) -> bool:
@@ -181,6 +231,21 @@ class QQBot:
                 log.exception("处理消息失败")
             finally:
                 self._queue.task_done()
+
+    def _start_proactive_ticker(self) -> None:
+        """每 45 秒检查一次到点的 timer（daemon 线程）。"""
+        if self.proactive is None:
+            return
+
+        def loop():
+            while True:
+                time.sleep(45)
+                try:
+                    self.proactive.tick()
+                except Exception:  # noqa: BLE001
+                    log.warning("主动关心 tick 失败", exc_info=True)
+
+        threading.Thread(target=loop, name="proactive-ticker", daemon=True).start()
 
     def start_worker(self) -> None:
         self._worker = threading.Thread(target=self._worker_loop, name="qq-worker", daemon=True)
@@ -410,6 +475,13 @@ class QQBot:
         sticker = (getattr(turn, "sticker", "") or "").strip()
         seq = 1
 
+        # 记下最近一次私聊的 openid —— 主动消息接口需要它
+        if kind == "c2c":
+            try:
+                self.pipeline.session.set("last_openid", target)
+            except Exception:  # noqa: BLE001
+                pass
+
         if decision["mode"] == "voice":
             # 语音先发，**念完再输出文字**
             if self._send_full_voice(kind, target, mid, turn, seq):
@@ -434,6 +506,13 @@ class QQBot:
             if sticker and self.sticker_enabled:
                 if self._send_sticker(kind, target, mid, sticker, seq):
                     seq += 1
+
+        # 这一轮聊完了：想想要不要过一会儿回访他，并保证链式 timer 一直在
+        if self.proactive is not None:
+            try:
+                self.proactive.on_turn_end(content, reply)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("主动关心调度失败：%r", exc)
 
         log.info("本轮完成：模式=%s，用时 %.1fs", decision["mode"], time.time() - t0)
 

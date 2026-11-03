@@ -134,6 +134,29 @@ class Pipeline:
                 msgs.append({"role": "assistant", "content": a})
 
         msgs.extend(self.session.history_messages(self.settings.history_turns))
+
+        # 之前她主动想说、但当时没能发出去的话（QQ 主动消息有配额）：
+        # 在这一轮里自然带一句，只提一次，提完就标记消费掉。
+        try:
+            from . import proactive as _proactive
+
+            pending = _proactive.read_pending_topics(self.session.conn)
+            if pending:
+                block = "\n".join("- " + p["text"] for p in pending)
+                msgs.append({
+                    "role": "system",
+                    "content": (
+                        "【你之前想对他说、但当时没能发出去的话】\n" + block +
+                        "\n如果合适就自然地带一句；如果他正在说别的事，就先把当前话题回好，"
+                        "别硬提，也别解释「上次没发出去」。"
+                    ),
+                })
+                _proactive.consume_pending_topics(
+                    self.session.conn, [p["id"] for p in pending]
+                )
+        except Exception:  # noqa: BLE001
+            pass
+
         msgs.append({"role": "user", "content": user_text})
         return msgs
 
