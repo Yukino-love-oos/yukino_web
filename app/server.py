@@ -61,7 +61,9 @@ PAGE = """<!doctype html>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="雪乃">
-<link rel="apple-touch-icon" href="/assets/yukino.png">
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/assets/icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="/assets/icon-512.png">
 <style>
   :root{--bg:#12141c;--panel:#1b1f2b;--line:#2c3242;--text:#e6e9f2;--dim:#8b93a7;
         --accent:#8fb6e8}
@@ -213,6 +215,23 @@ async function pollProactive(){
   }catch(e){}
 }
 setInterval(pollProactive, 25000);
+/* 安装到桌面：只有浏览器触发 beforeinstallprompt（需要 HTTPS）才显示按钮 */
+let _installEvt=null;
+window.addEventListener('beforeinstallprompt',e=>{
+  e.preventDefault(); _installEvt=e;
+  const b=document.getElementById('installBtn');
+  if(b) b.style.display='inline-block';
+});
+window.addEventListener('appinstalled',()=>{
+  const b=document.getElementById('installBtn');
+  if(b) b.style.display='none';
+});
+async function doInstall(){
+  if(!_installEvt) return;
+  _installEvt.prompt();
+  try{ await _installEvt.userChoice; }catch(e){}
+  _installEvt=null;
+}
 document.getElementById('f').addEventListener('submit',async ev=>{
   ev.preventDefault();
   const text=q.value.trim(); if(!text) return;
@@ -258,24 +277,34 @@ refresh(false);
 """
 
 MANIFEST = {
+    "id": "/",
     "name": "雪之下雪乃の奉仕部部室",
     "short_name": "雪乃",
-    "description": "本地运行的雪之下雪乃语音对话伴侣",
+    "description": "雪之下雪乃语音对话伴侣",
+    "lang": "zh-CN",
     "start_url": "/",
     "scope": "/",
     "display": "standalone",
+    "display_override": ["standalone", "minimal-ui"],
     "orientation": "portrait",
     "background_color": "#12141c",
     "theme_color": "#12141c",
+    # Chrome 判断「可安装」要求至少 192x192 和 512x512 的方形图标。
+    # 之前只放了一个 600x1156 的立绘，所以手机上点「添加到主屏幕」常常没反应。
     "icons": [
-        {"src": "/assets/yukino.png", "sizes": "600x1156", "type": "image/png", "purpose": "any"}
+        {"src": "/assets/icon-192.png", "sizes": "192x192",
+         "type": "image/png", "purpose": "any"},
+        {"src": "/assets/icon-512.png", "sizes": "512x512",
+         "type": "image/png", "purpose": "any"},
+        {"src": "/assets/icon-maskable-512.png", "sizes": "512x512",
+         "type": "image/png", "purpose": "maskable"},
     ],
 }
 
 SW_JS = """
 // 只缓存静态资源；/api/* 永远走网络，避免读到旧的好感度
 const CACHE='yukino-v1';
-const ASSETS=['/assets/yukino.png','/assets/calm.png','/assets/tsundere.png',
+const ASSETS=['/assets/icon-192.png','/assets/icon-512.png','/assets/yukino.png','/assets/calm.png','/assets/tsundere.png',
               '/assets/soft.png','/assets/angry.png','/assets/shy.png','/assets/tired.png'];
 self.addEventListener('install',e=>{
   e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS).catch(()=>{})).then(()=>self.skipWaiting()));
@@ -446,13 +475,26 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/proactive":
             self._proactive_pending()
             return
+        if path == "/api/app/version":
+            self._app_version()
+            return
+        if path == "/api/app/proactive":
+            self._app_proactive()
+            return
+        if path.startswith("/apk/"):
+            self._apk(path[len("/apk/"):])
+            return
         if path.startswith("/media/"):
             self._media(path[len("/media/"):])
             return
         self._send(404, b"not found", "text/plain; charset=utf-8")
 
     def do_POST(self):
-        if urlparse(self.path).path != "/api/chat" or not self._token_ok():
+        path = urlparse(self.path).path
+        if path == "/api/app/log":
+            self._app_log()
+            return
+        if path != "/api/chat" or not self._token_ok():
             self._json({"error": "unauthorized"}, 401) if not self._token_ok() else \
                 self._send(404, b"not found", "text/plain")
             return
@@ -611,6 +653,106 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             log.warning("取主动消息失败：%r", exc)
             self._json({"messages": []})
+
+
+    # ---------- 手机 App 用 ----------
+    APK_DIR = None  # 懒初始化
+
+    def _apk_dir(self):
+        from pathlib import Path as _P
+
+        return _P(__file__).resolve().parent.parent / "data" / "apk"
+
+    def _apk(self, name: str):
+        """分发 APK 安装包（手机 App 更新用）。"""
+        if not self._token_ok():
+            self._send(401, b"unauthorized", "text/plain")
+            return
+        from pathlib import Path as _P
+
+        safe = _P(name).name                 # 防目录穿越
+        if not safe.endswith(".apk"):
+            self._send(404, b"not found", "text/plain")
+            return
+        target = self._apk_dir() / safe
+        if not target.is_file():
+            self._send(404, b"not found", "text/plain")
+            return
+        data = target.read_bytes()
+        self._send(200, data, "application/vnd.android.package-archive",
+                   {"Content-Disposition": 'attachment; filename="%s"' % safe,
+                    "Cache-Control": "no-store"})
+
+    def _app_version(self):
+        """手机 App 启动时问：有没有新版本。"""
+        import json as _json
+
+        info = {"versionCode": 1, "versionName": "1.0", "url": "", "notes": "",
+                "minVersionCode": 1}
+        try:
+            vf = self._apk_dir() / "version.json"
+            if vf.is_file():
+                info.update(_json.loads(vf.read_text(encoding="utf-8")))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("读 version.json 失败：%r", exc)
+        # 相对地址补成绝对地址（App 里直接就能下载）
+        url = info.get("url") or ""
+        if url.startswith("/"):
+            host = self.headers.get("Host") or "42.120.61.220:8501"
+            info["url"] = "http://%s%s" % (host, url)
+        self._json(info)
+
+    def _app_proactive(self):
+        """App 轮询她主动发的消息。
+
+        用 since_id 游标，不消费 delivered 标记 —— 这样网页端和 App 端
+        各读各的，不会互相把消息「读掉」。
+        """
+        from urllib.parse import parse_qs as _parse_qs
+
+        try:
+            since = int(_parse_qs(urlparse(self.path).query).get("since", ["0"])[0] or 0)
+        except (TypeError, ValueError):
+            since = 0
+        pipe = get_pipeline()
+        # App 第一次启动：只返回当前游标，不返回历史消息，
+        # 否则刚装好就被十几条旧消息连环弹窗轰炸。
+        init = (_parse_qs(urlparse(self.path).query).get("init", ["0"])[0] or "0").lower() in ("1", "true", "yes")
+        if init:
+            row = pipe.session.conn.execute(
+                "SELECT COALESCE(MAX(id), 0) AS m FROM proactive_outbox").fetchone()
+            self._json({"cursor": int(row["m"]), "messages": []})
+            return
+        rows = pipe.session.conn.execute(
+            "SELECT id, ts, text FROM proactive_outbox WHERE id > ? ORDER BY id LIMIT 10",
+            (since,),
+        ).fetchall()
+        cursor = since
+        messages = []
+        for r in rows:
+            messages.append({"id": r["id"], "ts": r["ts"], "text": r["text"]})
+            cursor = max(cursor, int(r["id"]))
+        self._json({"cursor": cursor, "messages": messages})
+
+    def _app_log(self):
+        """App 崩溃/异常日志上报（手机端排错用，因为我连不上 adb）。"""
+        import datetime as _dt
+
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(n).decode("utf-8", "replace")[:8000]
+        except Exception:  # noqa: BLE001
+            body = ""
+        try:
+            d = self._apk_dir()
+            d.mkdir(parents=True, exist_ok=True)
+            with (d / "app_log.txt").open("a", encoding="utf-8") as f:
+                f.write("\n----- %s -----\n%s\n" % (
+                    _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), body))
+            log.warning("App 上报日志：%s", body[:200])
+        except Exception as exc:  # noqa: BLE001
+            log.warning("写 App 日志失败：%r", exc)
+        self._json({"ok": True})
 
 
 def _age_of(pipe) -> dict:

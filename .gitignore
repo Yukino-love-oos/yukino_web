@@ -91,3 +91,10 @@ docs/_test.wav
 
 # ---------- ECS 部署打包产物（几 GB，每次现打）----------
 _pack_ecs/
+
+# ---------- Android 构建（SDK / 产物 / 签名密钥都不入库）----------
+_android/sdk/
+_android/build/
+_android/cmdline-tools.zip
+_android/*.jks
+
