@@ -121,6 +121,8 @@ class Settings:
     persona_path: Path = ROOT / "persona/yukino.json"
     # 用户档案：她「知道」对面是谁（手写设定 + 记忆写回自动追加）
     user_profile_path: Path = ROOT / "persona/user_profile.json"
+    # 场景/时间线表：她在哪儿、什么时段在哪儿
+    scenes_path: Path = ROOT / "persona/scenes.json"
     # 好感度锁定值：设了就一直保持这个值（None = 正常浮动）
     affinity_lock: int | None = None
     # 主动关心（链式 timer + 临时回访）总开关
@@ -226,6 +228,7 @@ def load_settings(dotenv: Path | None = None) -> Settings:
             gpath("YUKINO_PERSONA", ROOT / "persona/yukino.json")
         ),
         user_profile_path=gpath("YUKINO_USER_PROFILE", ROOT / "persona/user_profile.json"),
+        scenes_path=gpath("YUKINO_SCENES", ROOT / "persona/scenes.json"),
         affinity_lock=(
             int(get("AFFINITY_LOCK")) if (get("AFFINITY_LOCK", "") or "").strip() else None
         ),

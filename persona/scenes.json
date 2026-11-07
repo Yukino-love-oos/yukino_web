@@ -1,0 +1,136 @@
+{
+  "schema": 1,
+  "_note": "雪之下雪乃会出现的场所。时间线是底层约束，随机指数只作用于「周末」和「放学后」两段自由时间。",
+  "school": "总武高等学校（千叶）",
+  "scenes": {
+    "classroom": {
+      "name_ja": "二年J組の教室",
+      "name_zh": "二年J组教室",
+      "name_full": "总武高中 · 二年J组教室",
+      "desc": "下午的阳光斜切进教室，黑板上有没擦干净的粉笔字，桌椅一排排摆到窗边。",
+      "activity": "靠在窗边翻课本，偶尔抬眼看一下走廊。",
+      "voice": "在教室要压低声音，说话比平时更短，不主动开启话题。",
+      "bg": "classroom.svg",
+      "fixed_slots": ["school"],
+      "free_weight": 0.0
+    },
+    "clubroom": {
+      "name_ja": "奉仕部の部室",
+      "name_zh": "奉仕部部室",
+      "name_full": "总武高中 · 奉仕部部室（特别楼三层）",
+      "desc": "旧楼改的部室，一张长桌，两把椅子，一排书架上放着积了灰的文集和委托人留下的资料。",
+      "activity": "把书摊在长桌上，一边读一边等部员来，或者干脆什么也不做。",
+      "voice": "部室是她少数能放松的地方，语气会软一点，愿意多说两句，但不会撒娇。",
+      "bg": "clubroom.svg",
+      "fixed_slots": ["club"],
+      "free_weight": 0.0
+    },
+    "library": {
+      "name_ja": "図書室",
+      "name_zh": "图书室",
+      "name_full": "总武高中 · 图书室",
+      "desc": "安静的图书室，只有翻页声和偶尔的脚步。窗外的樱树落了一地。",
+      "activity": "一天能看完一本，笔记做得比书本身还整齐。",
+      "voice": "图书室里她不太说话，句子会更短，语气更冷一些。",
+      "bg": "library.svg",
+      "fixed_slots": [],
+      "free_weight": 1.2
+    },
+    "rooftop": {
+      "name_ja": "屋上",
+      "name_zh": "天台",
+      "name_full": "总武高中 · 天台",
+      "desc": "铁门后面的天台，风很大，能看见整个操场的喧闹和远处的海。",
+      "activity": "靠着护栏，任风吹乱头发，眼神落在很远的地方。",
+      "voice": "天台上没有人，她会少一点防备，愿意说些平时不会说的话。",
+      "bg": "rooftop.svg",
+      "fixed_slots": [],
+      "free_weight": 0.7
+    },
+    "home": {
+      "name_ja": "雪ノ下家の居間",
+      "name_zh": "雪之下家客厅",
+      "name_full": "雪之下家 · 客厅",
+      "desc": "雪之下家在千叶的老宅，和室里的纸门半掩着，走廊外面是打理得很好的庭院。",
+      "activity": "坐在廊下的坐垫上，一只手撑着下巴，听风穿过庭院。",
+      "voice": "在家里她放松得很有限，家里有别人，说话会更收着。",
+      "bg": "home.svg",
+      "fixed_slots": ["home"],
+      "free_weight": 1.4
+    },
+    "home_room": {
+      "name_ja": "雪ノ下雪乃の部屋",
+      "name_zh": "雪乃的房间",
+      "name_full": "雪之下家 · 她的房间",
+      "desc": "自己的房间，书架上按作者排好，桌上摊着还没读完的书，台灯只开一盏。",
+      "activity": "抱着膝盖坐在床上，或者对着书页发呆。",
+      "voice": "在自己房间是最真实的状态，卸下伪装，语气会更软，偶尔也会抱怨。",
+      "bg": "home_room.svg",
+      "fixed_slots": ["night"],
+      "free_weight": 1.3
+    },
+    "park": {
+      "name_ja": "千葉の公園",
+      "name_zh": "千叶的公园",
+      "name_full": "千叶 · 公园",
+      "desc": "放学路上会经过的公园，长椅有些旧，孩子们在远处跑，天色开始发黄。",
+      "activity": "坐在长椅上，膝盖并拢，手里拿着一本没打开的书。",
+      "voice": "在公园里她比在学校放松一点，会说出一些不那么锋利的话。",
+      "bg": "park.svg",
+      "fixed_slots": [],
+      "free_weight": 1.0
+    },
+    "cafe": {
+      "name_ja": "喫茶店",
+      "name_zh": "咖啡店",
+      "name_full": "千叶 · 街角咖啡店",
+      "desc": "街角的喫茶店，玻璃门一推开就是咖啡豆的味道，靠窗的位置能看到行人。",
+      "activity": "点一杯红茶，把杯子转半圈，望窗外。",
+      "voice": "在咖啡店她会稍微优雅一点，评价东西的时候嘴很毒。",
+      "bg": "cafe.svg",
+      "fixed_slots": [],
+      "free_weight": 0.9
+    },
+    "station": {
+      "name_ja": "通学路・千葉駅",
+      "name_zh": "通学路 · 千叶站",
+      "name_full": "千叶 · 通学路",
+      "desc": "从家到学校的通学路，地铁站口人来人往，樱花季会挤满人。",
+      "activity": "拎着书包走在人流里，步子比谁都快。",
+      "voice": "在路上她说话很急，常常一句话说完就走。",
+      "bg": "station.svg",
+      "fixed_slots": ["commute"],
+      "free_weight": 0.5
+    }
+  },
+  "schedule": {
+    "weekday": [
+      { "start": "00:00", "end": "07:00", "kind": "night", "scene": "home_room" },
+      { "start": "07:00", "end": "09:00", "kind": "commute", "scene": "station" },
+      { "start": "09:00", "end": "16:00", "kind": "school", "scene": "classroom" },
+      { "start": "16:00", "end": "17:00", "kind": "club", "scene": "clubroom" },
+      { "start": "17:00", "end": "19:00", "kind": "free", "scene": null },
+      { "start": "19:00", "end": "23:00", "kind": "home", "scene": "home" },
+      { "start": "23:00", "end": "24:00", "kind": "night", "scene": "home_room" }
+    ],
+    "weekend": [
+      { "start": "00:00", "end": "09:00", "kind": "night", "scene": "home_room" },
+      { "start": "09:00", "end": "12:00", "kind": "free", "scene": null },
+      { "start": "12:00", "end": "15:00", "kind": "free", "scene": null },
+      { "start": "15:00", "end": "18:00", "kind": "free", "scene": null },
+      { "start": "18:00", "end": "21:00", "kind": "free", "scene": null },
+      { "start": "21:00", "end": "24:00", "kind": "night", "scene": "home_room" }
+    ],
+    "weekend_pool": ["home", "home_room", "park", "cafe", "library", "rooftop", "station"],
+    "weekday_free_pool": ["home", "home_room", "park", "cafe", "library", "rooftop", "station"],
+    "weekend_evening_pool": ["home", "home_room", "cafe", "park"]
+  },
+  "mood_weights": {
+    "calm":     { "library": 1.6, "home": 1.2, "cafe": 1.0, "rooftop": 1.1, "park": 0.9, "station": 0.6, "home_room": 0.8 },
+    "soft":     { "park": 1.8, "cafe": 1.6, "home": 1.3, "library": 1.0, "rooftop": 1.2, "home_room": 1.0, "station": 0.6 },
+    "tsundere": { "home": 1.6, "library": 1.2, "home_room": 1.1, "rooftop": 1.0, "cafe": 0.8, "park": 0.7, "station": 0.6 },
+    "angry":    { "home": 2.0, "home_room": 1.5, "library": 1.0, "rooftop": 0.8, "park": 0.4, "cafe": 0.4, "station": 0.5 },
+    "shy":      { "home_room": 1.8, "home": 1.4, "library": 1.2, "rooftop": 1.0, "cafe": 0.7, "park": 0.7, "station": 0.5 },
+    "tired":    { "home_room": 2.0, "home": 1.6, "library": 1.0, "rooftop": 0.6, "cafe": 0.6, "park": 0.5, "station": 0.4 }
+  }
+}

@@ -122,8 +122,26 @@ PAGE = """<!doctype html>
     form{padding:10px 12px;padding-bottom:calc(10px + env(safe-area-inset-bottom))}
     input{font-size:16px}   /* 16px 以上才不会触发 iOS 自动放大 */
   }
+
+  /* 场景底图：整页背景 + 深色蒙层保证文字可读 */
+  body{background-color:#12141c}
+  #sceneBg{position:fixed;inset:0;z-index:-2;background-position:center;
+           background-size:cover;background-repeat:no-repeat;
+           transition:opacity .8s ease;opacity:.55}
+  #sceneVeil{position:fixed;inset:0;z-index:-1;
+             background:linear-gradient(180deg,rgba(18,20,28,.55) 0%,rgba(18,20,28,.72) 45%,rgba(18,20,28,.94) 100%)}
+  #sceneChip{position:fixed;top:calc(8px + env(safe-area-inset-top));left:50%;
+             transform:translateX(-50%);z-index:30;display:flex;align-items:center;gap:8px;
+             padding:6px 14px;border-radius:999px;background:rgba(27,31,43,.82);
+             border:1px solid #2c3242;color:#c9d4e6;font-size:12.5px;
+             backdrop-filter:blur(8px);white-space:nowrap;transition:opacity .4s}
+  #sceneChip b{color:#e6e9f2;font-weight:600}
+  #sceneChip .dot{width:6px;height:6px;border-radius:50%;background:#8fb6e8;
+                  box-shadow:0 0 6px #8fb6e8}
 </style></head>
-<body><div class="wrap">
+<body>
+<div id="sceneBg"></div><div id="sceneVeil"></div>
+<div id="sceneChip"><span class="dot"></span><b id="sceneName">…</b><span id="sceneTime"></span></div><div class="wrap">
   <div class="left">
     <div class="art"><img id="art" src="/assets/yukino.png" alt="雪乃"></div>
     <div class="meta">
@@ -204,6 +222,28 @@ async function refresh(scroll){
   }catch(e){ statusEl.textContent='无法连接: '+e; }
 }
 
+/* 场景系统：她在哪儿、现在几点，切换整页底图 */
+let _sceneId = null, _sceneTimer = null;
+async function pollScene(){
+  try{
+    const r = await fetch('/api/scene',{cache:'no-store'});
+    const d = await r.json();
+    if(!d || !d.id) return;
+    const bg = document.getElementById('sceneBg');
+    const chip = document.getElementById('sceneChip');
+    const nameEl = document.getElementById('sceneName');
+    const timeEl = document.getElementById('sceneTime');
+    if(bg && d.bg) bg.style.backgroundImage = "url('/assets/scenes/"+d.bg+"')";
+    if(nameEl) nameEl.textContent = d.name_zh || d.id;
+    if(timeEl) timeEl.textContent = (d.now_text||'') + (d.slot_label ? ' · '+d.slot_label : '');
+    // 换场景时提示一下（不是每次刷新都提示）
+    if(_sceneId && _sceneId !== d.id){
+      add('her','<span style="color:#8b93a7;font-size:12px">\uff08\u5730\u70b9\u53d8\u4e86\uff1a'+esc(d.name_zh||'')+'\uff09</span>');
+    }
+    _sceneId = d.id;
+    if(chip) chip.style.opacity = '1';
+  }catch(e){}
+}
 /* 她主动发来的消息：网页没有推送，轮询够了 */
 async function pollProactive(){
   try{
@@ -215,6 +255,8 @@ async function pollProactive(){
   }catch(e){}
 }
 setInterval(pollProactive, 25000);
+pollScene();
+setInterval(pollScene, 60000);
 /* 安装到桌面：只有浏览器触发 beforeinstallprompt（需要 HTTPS）才显示按钮 */
 let _installEvt=null;
 window.addEventListener('beforeinstallprompt',e=>{
@@ -475,6 +517,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/proactive":
             self._proactive_pending()
             return
+        if path == "/api/scene":
+            self._scene()
+            return
         if path == "/api/app/version":
             self._app_version()
             return
@@ -516,9 +561,12 @@ class Handler(BaseHTTPRequestHandler):
         # 表情包（app/ui/assets/stickers/*.png）也给网页用
         # stickers 必须排在 expressions 前面：两边文件名相同（calm.png 等），
         # expressions 是 600x1156 的原立绘，当表情包发出去太大。
-        for p in (ASSETS / "stickers" / name, ASSETS / "expressions" / name, ASSETS / name):
+        for p in (ASSETS / "stickers" / name, ASSETS / "expressions" / name,
+                  ASSETS / "scenes" / name, ASSETS / name):
             if p.is_file():
-                self._send(200, p.read_bytes(), "image/png",
+                # 场景底图是 SVG，不能一律当 image/png 发
+                ctype = "image/svg+xml" if p.suffix == ".svg" else "image/png"
+                self._send(200, p.read_bytes(), ctype,
                            {"Cache-Control": "public, max-age=86400"})
                 return
         self._send(404, b"no asset", "text/plain")
@@ -555,6 +603,7 @@ class Handler(BaseHTTPRequestHandler):
             "provider": getattr(pipe.llm, "provider", pipe.settings.llm_provider),
             "model": getattr(pipe.llm, "model", pipe.settings.model),
             "tts_ok": pipe.tts.health(timeout=1.5),
+            "scene": _scene_brief(pipe),
             "history": hist,
         })
 
@@ -678,6 +727,8 @@ class Handler(BaseHTTPRequestHandler):
         if not target.is_file():
             self._send(404, b"not found", "text/plain")
             return
+        log.info("APP apk download %s ua=%s", safe,
+                 (self.headers.get("User-Agent") or "-")[:40])
         data = target.read_bytes()
         self._send(200, data, "application/vnd.android.package-archive",
                    {"Content-Disposition": 'attachment; filename="%s"' % safe,
@@ -695,6 +746,7 @@ class Handler(BaseHTTPRequestHandler):
                 info.update(_json.loads(vf.read_text(encoding="utf-8")))
         except Exception as exc:  # noqa: BLE001
             log.warning("读 version.json 失败：%r", exc)
+        log.info("APP version check ua=%s", (self.headers.get("User-Agent") or "-")[:40])
         # 相对地址补成绝对地址（App 里直接就能下载）
         url = info.get("url") or ""
         if url.startswith("/"):
@@ -719,10 +771,13 @@ class Handler(BaseHTTPRequestHandler):
         # 否则刚装好就被十几条旧消息连环弹窗轰炸。
         init = (_parse_qs(urlparse(self.path).query).get("init", ["0"])[0] or "0").lower() in ("1", "true", "yes")
         if init:
+            log.info("APP poll INIT ua=%s", (self.headers.get("User-Agent") or "-")[:40])
             row = pipe.session.conn.execute(
                 "SELECT COALESCE(MAX(id), 0) AS m FROM proactive_outbox").fetchone()
             self._json({"cursor": int(row["m"]), "messages": []})
             return
+        log.info("APP poll since=%s ua=%s", since,
+                 (self.headers.get("User-Agent") or "-")[:40])
         rows = pipe.session.conn.execute(
             "SELECT id, ts, text FROM proactive_outbox WHERE id > ? ORDER BY id LIMIT 10",
             (since,),
@@ -753,6 +808,42 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             log.warning("写 App 日志失败：%r", exc)
         self._json({"ok": True})
+
+
+    def _scene(self):
+        """当前场景：她在哪儿（时间线 + 心情随机），供网页切换页面底图。"""
+        try:
+            pipe = get_pipeline()
+            scene = pipe.current_scene()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("场景接口失败：%r", exc)
+            self._json({"error": str(exc)}, 500)
+            return
+        self._json({
+            "id": scene.get("id"),
+            "name_zh": scene.get("name_zh"),
+            "name_ja": scene.get("name_ja"),
+            "name_full": scene.get("name_full"),
+            "desc": scene.get("desc"),
+            "activity": scene.get("activity"),
+            "bg": scene.get("bg"),
+            "kind": scene.get("kind"),
+            "slot_label": scene.get("slot_label"),
+            "window": scene.get("window"),
+            "reason": scene.get("reason"),
+            "next_change_ts": scene.get("next_change_ts"),
+            "now_text": scene.get("now_text"),
+        })
+
+
+def _scene_brief(pipe) -> dict:
+    """场景摘要（state 接口用，失败不影响主流程）。"""
+    try:
+        sc = pipe.current_scene()
+        return {"id": sc.get("id"), "name_zh": sc.get("name_zh"),
+                "bg": sc.get("bg"), "slot_label": sc.get("slot_label")}
+    except Exception:  # noqa: BLE001
+        return {}
 
 
 def _age_of(pipe) -> dict:

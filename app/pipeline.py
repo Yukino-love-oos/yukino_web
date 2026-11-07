@@ -102,6 +102,28 @@ class Pipeline:
         snap = life.snapshot()
         return snap, lifecycle.render_age_hint(snap), lifecycle.render_life_block(self.persona.life)
 
+    # ---------------- 场景 / 时间线 ----------------
+    def _world(self):
+        """懒加载场景表（首次用到时读 persona/scenes.json）。"""
+        w = getattr(self, "_world_obj", None)
+        if w is None:
+            from . import world as _world_mod
+
+            w = _world_mod.load_world(self.settings.scenes_path, store=self.session)
+            self._world_obj = w
+        return w
+
+    def current_scene(self, now=None):
+        """她现在在哪儿（时间线硬约束 + 心情随机指数）。"""
+        try:
+            w = self._world()
+            mood_state = self.session.current_mood() or {}
+            return w.scene(now, mood=mood_state.get("mood", "calm"),
+                           affinity=self.session.affinity)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("场景计算失败：%r", exc)
+            return {}
+
     def build_messages(self, user_text: str) -> list[dict]:
         # 记忆召回：关键词相关度 × 新鲜度（半衰期 30 天）× 类型重要度
         hits = memory.recall(self.session.conn, user_text, k=self.settings.memory_k)
@@ -111,12 +133,19 @@ class Pipeline:
         profile_block = userprofile.render_block(
             userprofile.load(self.settings.user_profile_path)
         )
+
+        # 她现在在哪儿（时间线 + 心情随机）
+        scene = self.current_scene()
+        from . import world as _world_mod
+
+        scene_block = _world_mod.render_scene_block(scene)
         sys_prompt = render_system_prompt(
             self.persona,
             affinity=self.session.affinity,
             age_hint=age_hint,
             life_block=life_block,
             user_profile=profile_block,
+            scene_block=scene_block,
             memory_block=memory.build_memory_block(hits, max_chars=self.settings.memory_max_chars),
             # 心情带衰减：3 小时没聊，愤怒/害羞会自己回落，不会一直挂着脸
             mood_hint=self.session.mood_hint(),
